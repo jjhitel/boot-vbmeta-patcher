@@ -79,6 +79,16 @@ if errorlevel 1 (
 del "%GETPIP_PATH%"
 echo [+] pip installed successfully.
 
+echo [*] Installing cryptography package...
+"%PYTHON_DIR%\\python.exe" -m pip install cryptography
+if errorlevel 1 (
+    echo [!] Failed to install cryptography.
+    pause
+    exit /b
+)
+echo [+] cryptography installed successfully.
+
+
 :PythonExists
 echo [+] Python environment is ready.
 echo.
