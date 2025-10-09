@@ -46,14 +46,14 @@ set "KSU_APK_NAME=KernelSU_Next_v1.1.1_12851-release.apk"
 
 echo Starting KernelSU Boot Image Patcher...
 
-if not exist "%CURRENT_DIR%init_boot.img" (
-    echo Error: init_boot.img not found.
+if not exist "%CURRENT_DIR%boot.img" (
+    echo Error: boot.img not found.
     pause
     exit /b
 )
 
-echo Backing up original init_boot.img to init_boot.bak.img...
-move "%CURRENT_DIR%init_boot.img" "%CURRENT_DIR%init_boot.bak.img"
+echo Backing up original boot.img to boot.bak.img...
+move "%CURRENT_DIR%boot.img" "%CURRENT_DIR%boot.bak.img"
 
 if exist "%TMP_DIR%" (
     echo Cleaning up previous temporary directory...
@@ -62,7 +62,7 @@ if exist "%TMP_DIR%" (
 mkdir "%TMP_DIR%"
 
 echo Copying files to temporary directory...
-copy "%CURRENT_DIR%init_boot.bak.img" "%TMP_DIR%init_boot.img"
+copy "%CURRENT_DIR%boot.bak.img" "%TMP_DIR%boot.img"
 copy "%TOOLS_DIR%magiskboot.exe" "%TMP_DIR%"
 copy "%TOOLS_DIR%ksuinit" "%TMP_DIR%init"
 copy "%TOOLS_DIR%kernelsu.ko" "%TMP_DIR%kernelsu.ko"
@@ -72,7 +72,7 @@ cd "%TMP_DIR%"
 
 echo.
 echo Unpacking boot image...
-magiskboot.exe unpack init_boot.img
+magiskboot.exe unpack boot.img
 
 echo.
 echo Patching ramdisk...
@@ -92,17 +92,17 @@ del kernelsu.ko
 
 echo.
 echo Repacking boot image...
-magiskboot.exe repack init_boot.img
+magiskboot.exe repack boot.img
 
 if exist "new-boot.img" (
     echo.
-    echo Renaming patched image to init_boot.root.img...
-    move "new-boot.img" "%CURRENT_DIR%init_boot.root.img"
-    echo Success: Patched image saved as '%CURRENT_DIR%init_boot.root.img'
+    echo Renaming patched image to boot.root.img...
+    move "new-boot.img" "%CURRENT_DIR%boot.root.img"
+    echo Success: Patched image saved as '%CURRENT_DIR%boot.root.img'
 ) else (
     echo.
     echo Error: Patched image not found. Restoring original backup.
-    move "%CURRENT_DIR%init_boot.bak.img" "%CURRENT_DIR%init_boot.img"
+    move "%CURRENT_DIR%boot.bak.img" "%CURRENT_DIR%boot.img"
 )
 
 cd "%CURRENT_DIR%"
@@ -125,6 +125,6 @@ echo.
 echo Now running convert.bat...
 echo.
 
-call convert.bat with_init_boot
+call convert.bat with_boot
 
 endlocal

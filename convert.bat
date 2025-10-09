@@ -1,8 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
 
-if "%~1"=="with_init_boot" (
-    set "PROCESS_INIT_BOOT=true"
+if "%~1"=="with_boot" (
+    set "PROCESS_BOOT=true"
 )
 
 echo Checking for required files...
@@ -113,19 +113,19 @@ if errorlevel 1 (
 )
 echo.
 
-if defined PROCESS_INIT_BOOT (
-    echo Extracting info from init_boot.bak.img...
-    "%PYTHON%" "%PY_AVBTOOL%" info_image --image init_boot.bak.img > init_info.tmp
+if defined PROCESS_BOOT (
+    echo Extracting info from boot.bak.img...
+    "%PYTHON%" "%PY_AVBTOOL%" info_image --image boot.bak.img > boot_info.tmp
     if errorlevel 1 (
-        del init_info.tmp
-        echo Failed to get info from init_boot.bak.img. Aborting.
+        del boot_info.tmp
+        echo Failed to get info from boot.bak.img. Aborting.
         pause
         exit /b
     )
 
-    set "INIT_PROPS_FILES="
+    set "BOOT_PROPS_FILES="
     set /a prop_count=0
-    for /f "usebackq tokens=1,* delims=->" %%a in (`findstr /C:"Prop:" init_info.tmp`) do (
+    for /f "usebackq tokens=1,* delims=->" %%a in (`findstr /C:"Prop:" boot_info.tmp`) do (
         set /a prop_count+=1
         set "key_part=%%a"
         set "val_part=%%b"
@@ -137,41 +137,62 @@ if defined PROCESS_INIT_BOOT (
         set "PROP_VAL=!val_part:~2,-1!"
 
         rem Write value to temp file
-        <nul (set /p ".=!PROP_VAL!") > "prop_init_!prop_count!.tmp"
+        <nul (set /p ".=!PROP_VAL!") > "prop_boot_!prop_count!.tmp"
 
         rem Build argument string
-        set "INIT_PROPS_FILES=!INIT_PROPS_FILES! --prop_from_file "!PROP_KEY!:prop_init_!prop_count!.tmp""
+        set "BOOT_PROPS_FILES=!BOOT_PROPS_FILES! --prop_from_file "!PROP_KEY!:prop_boot_!prop_count!.tmp""
     )
 
-    for /f "usebackq tokens=3" %%a in (`findstr /C:"Image size:" init_info.tmp`) do ( set "INIT_IMG_SIZE=%%a" )
-    for /f "usebackq tokens=3,*" %%a in (`findstr /C:"Partition Name:" init_info.tmp`) do ( set "INIT_PART_NAME=%%a" )
-    for /f "usebackq tokens=2,*" %%a in (`findstr /C:"Salt:" init_info.tmp`) do ( set "INIT_SALT=%%a" )
-    for /f "usebackq tokens=3,*" %%a in (`findstr /C:"Rollback Index:" init_info.tmp`) do ( set "INIT_ROLLBACK_INDEX=%%a" )
+    for /f "usebackq tokens=3" %%a in (`findstr /C:"Image size:" boot_info.tmp`) do ( set "BOOT_IMG_SIZE=%%a" )
+    for /f "usebackq tokens=3,*" %%a in (`findstr /C:"Partition Name:" boot_info.tmp`) do ( set "BOOT_PART_NAME=%%a" )
+    for /f "usebackq tokens=2,*" %%a in (`findstr /C:"Salt:" boot_info.tmp`) do ( set "BOOT_SALT=%%a" )
+    for /f "usebackq tokens=3,*" %%a in (`findstr /C:"Rollback Index:" boot_info.tmp`) do ( set "BOOT_ROLLBACK_INDEX=%%a" )
 
-    del init_info.tmp
+    del boot_info.tmp
 
-    if not defined INIT_IMG_SIZE (
-        echo Failed to read INIT_IMG_SIZE from init_boot.bak.img info. Aborting.
+    if not defined BOOT_IMG_SIZE (
+        echo Failed to read BOOT_IMG_SIZE from boot.bak.img info. Aborting.
         pause
         exit /b
     )
 
-    echo Adding new hash footer to init_boot.root.img...
+	echo Checking vbmeta key...
+	if "!PUBLIC_KEY!"=="2597c218aae470a130f61162feaae70afd97f011" (
+		echo Matched RSA4096 key.
+		set "KEY_FILE=key\testkey_rsa4096.pem"
+	) else if "!PUBLIC_KEY!"=="cdbb77177f731920bbe0a0f94f84d9038ae0617d" (
+		echo Matched RSA2048 key.
+		set "KEY_FILE=key\testkey_rsa2048.pem"
+	) else (
+		echo Public key '!PUBLIC_KEY!' did not match known keys. Aborting.
+		pause
+		exit /b
+	)
+	if not defined ALGORITHM (
+		echo Could not determine Algorithm from vbmeta.img. Aborting.
+		pause
+		exit /b
+	)
+	echo.
+
+    echo Adding new hash footer to boot.root.img...
     "%PYTHON%" "%PY_AVBTOOL%" add_hash_footer ^
-        --image init_boot.root.img ^
-        --partition_size !INIT_IMG_SIZE! ^
-        --partition_name !INIT_PART_NAME! ^
-        --rollback_index !INIT_ROLLBACK_INDEX! ^
-        --salt !INIT_SALT! ^
-        !INIT_PROPS_FILES!
+        --image boot.root.img ^
+		--key "%~dp0!KEY_FILE!" ^
+		--algorithm !ALGORITHM! ^
+        --partition_size !BOOT_IMG_SIZE! ^
+        --partition_name !BOOT_PART_NAME! ^
+        --rollback_index !BOOT_ROLLBACK_INDEX! ^
+        --salt !BOOT_SALT! ^
+        !BOOT_PROPS_FILES!
 
     if errorlevel 1 (
-        echo Failed to add hash footer to init_boot.root.img. Aborting.
-        if exist prop_init_*.tmp del prop_init_*.tmp
+        echo Failed to add hash footer to boot.root.img. Aborting.
+        if exist prop_boot_*.tmp del prop_boot_*.tmp
         pause
         exit /b
     )
-    if exist prop_init_*.tmp del prop_init_*.tmp
+    if exist prop_boot_*.tmp del prop_boot_*.tmp
     echo.
 )
 
@@ -197,22 +218,12 @@ echo.
 
 echo Re-signing vbmeta.img by reading from backup...
 
-if defined PROCESS_INIT_BOOT (
-    "%PYTHON%" "%PY_AVBTOOL%" make_vbmeta_image ^
-        --output vbmeta.img ^
-        --key "%~dp0!KEY_FILE!" ^
-        --algorithm !ALGORITHM! ^
-        --include_descriptors_from_image vbmeta.bak.img ^
-        --include_descriptors_from_image init_boot.root.img ^
-        --include_descriptors_from_image vendor_boot_prc.img
-) else (
-    "%PYTHON%" "%PY_AVBTOOL%" make_vbmeta_image ^
-        --output vbmeta.img ^
-        --key "%~dp0!KEY_FILE!" ^
-        --algorithm !ALGORITHM! ^
-        --include_descriptors_from_image vbmeta.bak.img ^
-        --include_descriptors_from_image vendor_boot_prc.img
-)
+"%PYTHON%" "%PY_AVBTOOL%" make_vbmeta_image ^
+	--output vbmeta.img ^
+	--key "%~dp0!KEY_FILE!" ^
+	--algorithm !ALGORITHM! ^
+	--include_descriptors_from_image vbmeta.bak.img ^
+	--include_descriptors_from_image vendor_boot_prc.img
 
 if errorlevel 1 (
     echo Failed to re-sign vbmeta.img. Aborting.
@@ -225,8 +236,8 @@ echo Renaming final images...
 if exist vendor_boot_prc.img (
     ren vendor_boot_prc.img vendor_boot.img
 )
-if defined PROCESS_INIT_BOOT (
-    ren init_boot.root.img init_boot.img
+if defined PROCESS_BOOT (
+    ren boot.root.img boot.img
 )
 echo.
 
@@ -234,7 +245,7 @@ echo Moving final images to 'output' folder...
 if not exist output mkdir output
 move vendor_boot.img output
 move vbmeta.img output
-if defined PROCESS_INIT_BOOT move init_boot.img output
+if defined PROCESS_BOOT move boot.img output
 echo.
 
 echo Moving backup files to 'backup' folder...
