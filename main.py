@@ -18,12 +18,13 @@ PYTHON_DIR = BASE_DIR / "python3"
 AVB_DIR = TOOLS_DIR / "avb"
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_ROOT_DIR = BASE_DIR / "output_root"
+OUTPUT_DP_DIR = BASE_DIR / "output_dp"
 BACKUP_DIR = BASE_DIR / "backup"
 WORK_DIR = BASE_DIR / "patch_work"
 
 PYTHON_EXE = PYTHON_DIR / "python.exe"
 AVBTOOL_PY = AVB_DIR / "avbtool.py"
-EDIT_VNDRBOOT_PY = TOOLS_DIR / "edit_vndrboot.py"
+EDIT_IMAGES_PY = TOOLS_DIR / "edit_images.py"
 GET_KERNEL_VER_PY = TOOLS_DIR / "get_kernel_ver.py"
 
 KSU_APK_REPO = "KernelSU-Next/KernelSU-Next"
@@ -307,7 +308,7 @@ def convert_images():
     print("[+] Backup complete.\n")
 
     print("--- Starting PRC/ROW Conversion ---")
-    run_command([str(PYTHON_EXE), str(EDIT_VNDRBOOT_PY), str(vendor_boot_bak)])
+    run_command([str(PYTHON_EXE), str(EDIT_IMAGES_PY), "vndrboot", str(vendor_boot_bak)])
 
     vendor_boot_prc = BASE_DIR / "vendor_boot_prc.img"
     print("\n[*] Verifying conversion result...")
@@ -404,7 +405,7 @@ def finalize_images():
     
 def root_boot_only():
     """Patches boot.img with KernelSU and places it in the output_root folder."""
-    print("[*] Cleaning up old output_root folder...")
+    print(f"[*] Cleaning up old '{OUTPUT_ROOT_DIR.name}' folder...")
     if OUTPUT_ROOT_DIR.exists():
         shutil.rmtree(OUTPUT_ROOT_DIR)
     OUTPUT_ROOT_DIR.mkdir(exist_ok=True)
@@ -474,6 +475,55 @@ def process_boot_image(key_map, image_to_process):
     run_command(add_footer_cmd)
 
 
+def edit_devinfo_persist():
+    """Backs up and modifies devinfo.img and persist.img."""
+    print("--- Starting devinfo & persist patching process ---")
+    
+    devinfo_img = BASE_DIR / "devinfo.img"
+    persist_img = BASE_DIR / "persist.img"
+    
+    if not devinfo_img.exists() or not persist_img.exists():
+        print("[!] Error: 'devinfo.img' and/or 'persist.img' not found. Please place them in the main directory.")
+        sys.exit(1)
+        
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_critical_dir = BASE_DIR / f"backup_critical_{timestamp}"
+    backup_critical_dir.mkdir(exist_ok=True)
+    
+    print(f"[*] Backing up critical images to '{backup_critical_dir.name}'...")
+    shutil.copy(devinfo_img, backup_critical_dir)
+    shutil.copy(persist_img, backup_critical_dir)
+    print("[+] Backup complete.\n")
+
+    print(f"[*] Cleaning up old '{OUTPUT_DP_DIR.name}' folder...")
+    if OUTPUT_DP_DIR.exists():
+        shutil.rmtree(OUTPUT_DP_DIR)
+    OUTPUT_DP_DIR.mkdir(exist_ok=True)
+
+    print("[*] Running patch script...")
+    run_command([str(PYTHON_EXE), str(EDIT_IMAGES_PY), "dp"])
+
+    modified_devinfo = BASE_DIR / "devinfo_modified.img"
+    modified_persist = BASE_DIR / "persist_modified.img"
+    
+    if modified_devinfo.exists():
+        shutil.move(modified_devinfo, OUTPUT_DP_DIR / "devinfo.img")
+    if modified_persist.exists():
+        shutil.move(modified_persist, OUTPUT_DP_DIR / "persist.img")
+        
+    print(f"\n[*] Final images have been moved to '{OUTPUT_DP_DIR.name}' folder.")
+    
+    # Clean up original files after successful backup and modification
+    print("[*] Cleaning up original image files...")
+    devinfo_img.unlink(missing_ok=True)
+    persist_img.unlink(missing_ok=True)
+    
+    print("\n" + "=" * 61)
+    print("  SUCCESS!")
+    print(f"  Modified images are ready in the '{OUTPUT_DP_DIR.name}' folder.")
+    print("=" * 61)
+
+
 def show_image_info(files):
     """Displays information about image files, searching directories for .img files."""
     all_files = []
@@ -535,7 +585,8 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True, help="Available commands")
 
     subparsers.add_parser("convert", help="Convert vendor_boot region and remake vbmeta.")
-    subparsers.add_parser("root", help="Patch boot.img with KernelSU only.")
+    subparsers.add_parser("root", help="Patch boot.img with KernelSU.")
+    subparsers.add_parser("edit_dp", help="Edit devinfo and persist images.")
     parser_info = subparsers.add_parser("info", help="Display AVB info for image files or directories.")
     parser_info.add_argument("files", nargs='+', help="Image file(s) or folder(s) to inspect.")
 
@@ -546,6 +597,8 @@ def main():
             convert_images()
         elif args.command == "root":
             root_boot_only()
+        elif args.command == "edit_dp":
+            edit_devinfo_persist()
         elif args.command == "info":
             show_image_info(args.files)
     except (subprocess.CalledProcessError, FileNotFoundError, RuntimeError, SystemExit) as e:
