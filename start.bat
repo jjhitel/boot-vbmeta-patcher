@@ -32,27 +32,29 @@ if not exist "%MAIN_PY%" (
 cls
 echo.
 echo   ==========================================================
-echo     LTBox - Main Menu
+echo     LTBox - Main
 echo   ==========================================================
 echo.
-echo     1. Patch and Flash ROW ROM (Recommended)
-echo     2. Advanced
+echo     1. Patch ^& Flash ROW ROM to PRC device
+echo     2. Create Rooted boot.img
 echo.
-echo     3. Exit
+echo     a. Advanced
+echo     x. Exit
 echo.
 echo   ==========================================================
 echo.
 
 set "CHOICE="
-set /p "CHOICE=    Enter the number for the task you want to run: "
+set /p "CHOICE=    Enter your choice (1, 2, a, e): "
 
-if "%CHOICE%"=="1" call :run_task patch_all "Full Patch and Flash ROW ROM"
-if "%CHOICE%"=="2" goto :advanced_menu
-if "%CHOICE%"=="3" goto :cleanup
+if /I "%CHOICE%"=="1" call :run_task patch_all "Full Patch and Flash ROW ROM"
+if /I "%CHOICE%"=="2" call :run_task root "Root boot.img"
+if /I "%CHOICE%"=="a" goto :advanced_menu
+if /I "%CHOICE%"=="x" goto :cleanup
 
 :: Handle invalid input
 echo.
-echo     [!] Invalid choice. Please enter a number from 1-3.
+echo     [!] Invalid choice. Please enter 1, 2, a, or e.
 pause
 goto :main_menu
 
@@ -62,47 +64,39 @@ goto :main_menu
 cls
 echo.
 echo   ==========================================================
-echo     LTBox - Advanced Menu
+echo     LTBox - Advanced
 echo   ==========================================================
 echo.
-echo     --- Single Patch Tools ---
-echo     1. Convert ROM (PRC to ROW)
-echo     2. Dump devinfo/persist via EDL
-echo     3. Patch devinfo/persist (Region Code Reset)
-echo     4. Write devinfo/persist via EDL (Flash patched)
-echo     5. Create Rooted boot.img
+echo     1. Convert PRC to ROW in ROM
+echo     2. Dump devinfo/persist from device
+echo     3. Patch devinfo/persist to reset region code
+echo     4. Write devinfo/persist to device
+echo     5. Detect Anti-Rollback from device
+echo     6. Patch rollback indices in ROM
+echo     7. Write Anti-Anti-Rollback to device
+echo     8. Modify xml to update without wiping data
+echo     9. Flash ROM to device
 echo.
-echo     --- Anti-Rollback Tools (Manual) ---
-echo     6. Read Anti-Rollback (Dump current, Compare)
-echo     7. Patch Anti-Rollback (Create patched images)
-echo     8. Write Anti-Rollback (Flash patched images)
-echo.
-echo     --- Full Firmware Tools ---
-echo     9. Modify XML for Update (RSA Firmware)
-echo     10. Flash EDL (Full Firmware Flash)
-echo.
-echo     --- Maintenance ---
-echo     11. Clean Workspace (Remove tools and I/O folders)
-echo     12. Back to Main Menu
+echo     10. Clean workspace
+echo     m. Back to Main
 echo.
 echo   ==========================================================
 echo.
 
 set "ADV_CHOICE="
-set /p "ADV_CHOICE=    Enter the number for the task you want to run: "
+set /p "ADV_CHOICE=    Enter your choice (1-10, m): "
 
-if "%ADV_CHOICE%"=="1" call :run_task convert "ROM Conversion PRC to ROW"
-if "%ADV_CHOICE%"=="2" call :run_task read_edl "EDL Dump devinfo/persist"
-if "%ADV_CHOICE%"=="3" call :run_task edit_dp "Patch devinfo/persist"
-if "%ADV_CHOICE%"=="4" call :run_task write_edl "EDL Write devinfo/persist"
-if "%ADV_CHOICE%"=="5" call :run_task root "Root boot.img"
-if "%ADV_CHOICE%"=="6" call :run_task read_anti_rollback "Read Anti-Rollback Status"
-if "%ADV_CHOICE%"=="7" call :run_task patch_anti_rollback "Patch Anti-Rollback Files"
-if "%ADV_CHOICE%"=="8" call :run_task write_anti_rollback "Write Anti-Rollback Files"
-if "%ADV_CHOICE%"=="9" call :run_task modify_xml "Modify XML for Update"
-if "%ADV_CHOICE%"=="10" call :run_task flash_edl "Full EDL Flash"
+if "%ADV_CHOICE%"=="1" call :run_task convert "Convert PRC to ROW in ROM"
+if "%ADV_CHOICE%"=="2" call :run_task read_edl "Dump devinfo/persist from device"
+if "%ADV_CHOICE%"=="3" call :run_task edit_dp "Patch devinfo/persist to reset region code"
+if "%ADV_CHOICE%"=="4" call :run_task write_edl "Write devinfo/persist to device"
+if "%ADV_CHOICE%"=="5" call :run_task read_anti_rollback "Detect Anti-Rollback from device"
+if "%ADV_CHOICE%"=="6" call :run_task patch_anti_rollback "Patch rollback indices in ROM"
+if "%ADV_CHOICE%"=="7" call :run_task write_anti_rollback "Write Anti-Anti-Rollback to device"
+if "%ADV_CHOICE%"=="8" call :run_task modify_xml "Modify xml to update without wiping data"
+if "%ADV_CHOICE%"=="9" call :run_task flash_edl "Flash ROM to device"
 
-if "%ADV_CHOICE%"=="11" (
+if "%ADV_CHOICE%"=="10" (
     cls
     echo ==========================================================
     echo  Starting Task: [Workspace Cleanup]...
@@ -119,10 +113,10 @@ if "%ADV_CHOICE%"=="11" (
     goto :cleanup
 )
 
-if "%ADV_CHOICE%"=="12" goto :main_menu
+if /I "%ADV_CHOICE%"=="m" goto :main_menu
 
 echo.
-echo     [!] Invalid choice. Please enter a number from 1-12.
+echo     [!] Invalid choice. Please enter a number from 1-10, or m.
 pause
 goto :advanced_menu
 
@@ -143,9 +137,16 @@ echo ==========================================================
 echo  Task [%~2] has completed.
 echo ==========================================================
 echo.
-echo Press any key to return to the main menu...
+echo Press any key to return...
 pause > nul
-goto :main_menu
+
+:: If the task was from the Main menu, return to Main
+if "%1"=="patch_all" goto :main_menu
+if "%1"=="root" goto :main_menu
+
+:: Stay in advanced menu for advanced tasks
+goto :advanced_menu
+
 
 :: --- 6. Exit ---
 :cleanup

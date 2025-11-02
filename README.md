@@ -53,68 +53,36 @@ This toolkit provides an all-in-one solution for the following tasks **without u
 
 Before you begin, place the required files into the correct folders. The script will guide you if files are missing.
 
-* **For ALL EDL Operations (Menu 1, 2, 4, 6, 8, 10):**
+* **For ALL EDL Operations:**
     * The EDL loader file (`xbl_s_devprg_ns.melf`) **MUST** be placed in the `image` folder.
 
-* **For `Patch & Flash ROW ROM` (Main Menu 1) or `Modify XML` (Advanced 9):**
+* **For `Patch & Flash ROW ROM` or `Modify xml` (Advanced 8) or `Flash ROM`:**
     * You must copy the **entire `image` folder** from your unpacked Lenovo RSA firmware (the one containing `*.x` files, `*.img` files, etc.) into the LTBox root directory.
     * The script will prompt you for this folder. It is typically found in `C:\ProgramData\RSA\Download\RomFiles\[Firmware_Name]\`.
 
-* **For `Convert ROM` (Advanced 1) or `Create Rooted boot.img` (Advanced 5):**
+* **For `Create Rooted boot.img` or `Convert PRC to ROW`:**
     * Place the required source `.img` files (e.g., `vendor_boot.img`, `vbmeta.img`, `boot.img`) into the `image` folder.
 
-* **For `devinfo/persist` patching (Advanced 2, 3):**
-    * **Menu 2 (Dump):** Dumps `devinfo.img` and `persist.img` *to* the `backup` folder.
-    * **Menu 3 (Patch):** Reads `devinfo.img` and `persist.img` *from* the `backup` folder, and saves patched versions to `output_dp`.
+* **For `devinfo/persist` patching:**
+    * **Advanced 2 (Dump):** Dumps `devinfo.img` and `persist.img` *to* the `backup` folder.
+    * **Advanced 3 (Patch):** Reads `devinfo.img` and `persist.img` *from* the `backup` folder, and saves patched versions to `output_dp`.
 
-* **For `Anti-Rollback` (Advanced 6, 7):**
+* **For `Anti-Anti-Rollback`:**
     * These tools require the **new (downgrade)** firmware's `boot.img` and `vbmeta_system.img` to be in the `image` folder for comparison.
-    * **Menu 6 (Read):** Will automatically dump your *current* device's firmware to `input_current` to perform the comparison.
+    * **Advanced 5 (Detect):** Will automatically dump your *current* device's firmware to `input_current` to perform the comparison.
 
 ## 4. How to Use
 
 1.  **Place Files:** Put the necessary files (especially the `image` folder and/or EDL loader) into the correct location as described in **Section 3**.
 2.  **Run the Script:** Double-click `start.bat`.
 3.  **Select Task:** Choose an option from the menu.
-    * **Menu 1** is the fully automated process.
-    * **Menu 2** opens the advanced menu for individual steps.
+    * **`1` or `2`** for the main tasks.
+    * **`a`** to open the Advanced menu for individual steps.
 4.  **Get Results:** After a script finishes, the modified images will be saved in a corresponding `output*` folder (e.g., `output`, `output_root`, `output_dp`, `output_anti_rollback`).
-5.  **Flash the Images:** The `patch_all` and `flash_edl` menus handle this automatically. You can also flash individual `output*` images manually.
+5.  **Flash the Images:** The `Patch & Flash` and `Flash ROM` options handle this automatically. You can also flash individual `output*` images manually using the Advanced tools.
 
 ## 5. Script Descriptions
 
 * **`start.bat`**: This is the main script you will run. It provides access to all functions.
-
-### Main Menu
-
-* **1. Patch and Flash ROW ROM (Recommended):**
-    * This is the all-in-one automated function. It runs the following steps in order:
-    1.  Waits for the user to provide the full RSA firmware `image` folder.
-    2.  `convert_images` (Patches PRC files to ROW in `output` folder).
-    3.  `modify_xml` (Decrypts and patches `.x` files, saves to `output_xml`).
-    4.  `read_edl` (Dumps `devinfo/persist` to `backup` folder. **Requires EDL connection.**).
-    5.  `edit_devinfo_persist` (Patches `devinfo/persist`, saves to `output_dp`).
-    6.  `read_anti_rollback` + `patch_anti_rollback` (Dumps current boot/vbmeta, compares to `image` folder, and patches if needed, saving to `output_anti_rollback`. **Requires EDL connection.**).
-    7.  `flash_edl` (Copies all `output*` files to `image`, flashes main firmware, flashes `output_dp`, flashes `output_anti_rollback`, and reboots. **Requires EDL connection.**).
-* **2. Advanced Tools:**
-    * Opens a submenu for all individual tasks.
-* **3. Exit:**
-    * Closes the script.
-
-### Advanced Menu
-
-* **1. Convert ROM (PRC to ROW):** Reads `vendor_boot.img` / `vbmeta.img` from `image`, saves patched files to `output`.
-* **2. Dump devinfo/persist via EDL:** Dumps partitions directly into the `backup` folder. Requires EDL loader in `image`.
-* **3. Patch devinfo/persist (Region Code Reset):** Reads `devinfo/persist` from `backup`, saves patched files to `output_dp`.
-* **4. Write devinfo/persist via EDL (Flash patched):** Reads patched images from `output_dp` and flashes them. Requires EDL loader in `image`.
-* **5. Create Rooted boot.img:** Reads `boot.img` from `image`, saves patched file to `output_root`.
-* **6. Read Anti-Rollback (Dump current, Compare):** Dumps `boot`/`vbmeta_system` to `input_current`, compares indices against `image` folder, and reports if patching is needed.
-* **7. Patch Anti-Rollback (Create patched images):** Runs the same "Read" step, and if patching is needed, saves patched `boot`/`vbmeta_system` to `output_anti_rollback`.
-* **8. Write Anti-Rollback (Flash patched images):** Flashes the patched images from `output_anti_rollback`.
-* **9. Modify XML for Update (RSA Firmware):** Reads `.x` files from `image`, saves patched `.xml` files to `output_xml`.
-* **10. Flash EDL (Full Firmware Flash):** Copies all `output*` contents into `image` (overwriting) and flashes the entire folder. This **includes** flashing `output_dp` and `output_anti_rollback` images at the end before resetting.
-* **11. Clean Workspace:** Deletes all `input*`, `output*`, `image`, `working`, `avb` folders, and downloaded tools. **Keeps `python3` and `backup` folders.** (Exits after running).
-* **12. Back to Main Menu:** Returns to the main menu.
-
 * **`info_image.bat`**: A separate utility script. Drag & drop `.img` file(s) or folder(s) onto this script to see AVB (Android Verified Boot) information.
     * *Output: `image_info_*.txt`*
