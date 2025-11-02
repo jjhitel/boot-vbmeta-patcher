@@ -35,7 +35,6 @@ echo   ==========================================================
 echo     LTBox - Main Menu
 echo   ==========================================================
 echo.
-:: Fixed: Replaced problematic '&' with 'and'
 echo     1. Patch and Flash ROW ROM (Recommended)
 echo     2. Advanced
 echo.
@@ -47,7 +46,6 @@ echo.
 set "CHOICE="
 set /p "CHOICE=    Enter the number for the task you want to run: "
 
-:: Fixed: Replaced problematic '&' with 'and'
 if "%CHOICE%"=="1" call :run_task patch_all "Full Patch and Flash ROW ROM"
 if "%CHOICE%"=="2" goto :advanced_menu
 if "%CHOICE%"=="3" goto :cleanup
@@ -67,20 +65,25 @@ echo   ==========================================================
 echo     LTBox - Advanced Menu
 echo   ==========================================================
 echo.
+echo     --- Single Patch Tools ---
 echo     1. Convert ROM (PRC to ROW)
 echo     2. Dump devinfo/persist via EDL
 echo     3. Patch devinfo/persist (Region Code Reset)
 echo     4. Write devinfo/persist via EDL (Flash patched)
 echo     5. Create Rooted boot.img
-echo     6. Bypass Anti-Rollback (Firmware Downgrade)
+echo.
+echo     --- Anti-Rollback Tools (Manual) ---
+echo     6. Read Anti-Rollback (Dump current, Compare)
+echo     7. Patch Anti-Rollback (Create patched images)
+echo     8. Write Anti-Rollback (Flash patched images)
 echo.
 echo     --- Full Firmware Tools ---
-echo     7. Modify XML for Update (RSA Firmware)
-echo     8. Flash EDL (Full Firmware Flash)
+echo     9. Modify XML for Update (RSA Firmware)
+echo     10. Flash EDL (Full Firmware Flash)
 echo.
 echo     --- Maintenance ---
-echo     9. Clean Workspace (Remove tools and I/O folders)
-echo     10. Back to Main Menu
+echo     11. Clean Workspace (Remove tools and I/O folders)
+echo     12. Back to Main Menu
 echo.
 echo   ==========================================================
 echo.
@@ -93,11 +96,13 @@ if "%ADV_CHOICE%"=="2" call :run_task read_edl "EDL Dump devinfo/persist"
 if "%ADV_CHOICE%"=="3" call :run_task edit_dp "Patch devinfo/persist"
 if "%ADV_CHOICE%"=="4" call :run_task write_edl "EDL Write devinfo/persist"
 if "%ADV_CHOICE%"=="5" call :run_task root "Root boot.img"
-if "%ADV_CHOICE%"=="6" call :run_task anti_rollback "Anti-Rollback Bypass"
-if "%ADV_CHOICE%"=="7" call :run_task modify_xml "Modify XML for Update"
-if "%ADV_CHOICE%"=="8" call :run_task flash_edl "Full EDL Flash"
+if "%ADV_CHOICE%"=="6" call :run_task read_anti_rollback "Read Anti-Rollback Status"
+if "%ADV_CHOICE%"=="7" call :run_task patch_anti_rollback "Patch Anti-Rollback Files"
+if "%ADV_CHOICE%"=="8" call :run_task write_anti_rollback "Write Anti-Rollback Files"
+if "%ADV_CHOICE%"=="9" call :run_task modify_xml "Modify XML for Update"
+if "%ADV_CHOICE%"=="10" call :run_task flash_edl "Full EDL Flash"
 
-if "%ADV_CHOICE%"=="9" (
+if "%ADV_CHOICE%"=="11" (
     cls
     echo ==========================================================
     echo  Starting Task: [Workspace Cleanup]...
@@ -114,10 +119,10 @@ if "%ADV_CHOICE%"=="9" (
     goto :cleanup
 )
 
-if "%ADV_CHOICE%"=="10" goto :main_menu
+if "%ADV_CHOICE%"=="12" goto :main_menu
 
 echo.
-echo     [!] Invalid choice. Please enter a number from 1-10.
+echo     [!] Invalid choice. Please enter a number from 1-12.
 pause
 goto :advanced_menu
 

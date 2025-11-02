@@ -915,7 +915,7 @@ def read_edl():
     print(f"[*] You can now run 'Patch devinfo/persist' (Menu 3) to patch them.")
 
 
-def write_edl(skip_reset=False):
+def write_edl(skip_reset=False, skip_reset_edl=False):
     print("--- Starting EDL Write Process ---")
 
     edl_ng_exe = _ensure_edl_ng()
@@ -926,17 +926,18 @@ def write_edl(skip_reset=False):
         raise FileNotFoundError(f"{OUTPUT_DP_DIR.name} not found.")
     print(f"[+] Found patched images folder: '{OUTPUT_DP_DIR.name}'.")
 
-    print(f"--- Waiting for EDL Loader File ---")
-    required_files = [EDL_LOADER_FILENAME]
-    prompt = (
-        f"[STEP 1] Place the EDL loader file ('{EDL_LOADER_FILENAME}')\n"
-        f"         into the '{IMAGE_DIR.name}' folder to proceed."
-    )
-    IMAGE_DIR.mkdir(exist_ok=True) 
-    wait_for_files(IMAGE_DIR, required_files, prompt)
-    print(f"[+] Loader file '{EDL_LOADER_FILE.name}' found in '{IMAGE_DIR.name}'.")
+    if not skip_reset_edl:
+        print(f"--- Waiting for EDL Loader File ---")
+        required_files = [EDL_LOADER_FILENAME]
+        prompt = (
+            f"[STEP 1] Place the EDL loader file ('{EDL_LOADER_FILENAME}')\n"
+            f"         into the '{IMAGE_DIR.name}' folder to proceed."
+        )
+        IMAGE_DIR.mkdir(exist_ok=True) 
+        wait_for_files(IMAGE_DIR, required_files, prompt)
+        print(f"[+] Loader file '{EDL_LOADER_FILE.name}' found in '{IMAGE_DIR.name}'.")
 
-    wait_for_edl()
+        wait_for_edl()
 
     patched_devinfo = OUTPUT_DP_DIR / "devinfo.img"
     patched_persist = OUTPUT_DP_DIR / "persist.img"
@@ -1128,20 +1129,8 @@ def patch_vbmeta_image_rollback(image_name, current_rb_index, new_image_path, pa
         print(f"[!] Error processing {image_name}: {e}", file=sys.stderr)
         raise
 
-def anti_rollback():
-    print("--- Anti-Anti-Rollback Patcher ---")
-    print("This tool patches new firmware images (for downgrading)")
-    print("to match your currently installed firmware's rollback index.")
-    print("-" * 50)
-    check_dependencies()
-    
-    if OUTPUT_ANTI_ROLLBACK_DIR.exists():
-        shutil.rmtree(OUTPUT_ANTI_ROLLBACK_DIR)
-    OUTPUT_ANTI_ROLLBACK_DIR.mkdir(exist_ok=True)
-    
+def _compare_rollback_indices(edl_ng_exe):
     print("\n--- [STEP 1] Dumping Current Firmware via EDL ---")
-    edl_ng_exe = _ensure_edl_ng()
-    
     INPUT_CURRENT_DIR.mkdir(exist_ok=True)
     boot_out = INPUT_CURRENT_DIR / "boot.img"
     vbmeta_out = INPUT_CURRENT_DIR / "vbmeta_system.img"
@@ -1183,7 +1172,10 @@ def anti_rollback():
         
     print("\n--- [STEP 1] Dump complete ---")
     
+    print("\n--- [STEP 2] Comparing Rollback Indices ---")
     print("\n[*] Extracting current firmware rollback indices...")
+    current_boot_rb = 0
+    current_vbmeta_rb = 0
     try:
         current_boot_info = extract_image_avb_info(INPUT_CURRENT_DIR / "boot.img")
         current_boot_rb = int(current_boot_info.get('rollback', '0'))
@@ -1192,50 +1184,74 @@ def anti_rollback():
         current_vbmeta_rb = int(current_vbmeta_info.get('rollback', '0'))
     except Exception as e:
         print(f"[!] Error reading current image info: {e}. Please check files.", file=sys.stderr)
-        return
+        return 'ERROR', 0, 0
 
     print(f"  > Current Boot Index: {current_boot_rb}")
     print(f"  > Current VBMeta System Index: {current_vbmeta_rb}")
 
-    new_files = ["boot.img", "vbmeta_system.img"]
-    new_prompt = (
-        "\n--- [STEP 2] Waiting for New Firmware ---\n"
-        "Place the NEW firmware files you want to FLASH\n"
-        "         (e.g., the downgrade firmware) into the folder below."
-    )
-    wait_for_files(INPUT_NEW_DIR, new_files, new_prompt)
-    
-    print("\n[*] Extracting new firmware rollback indices...")
+    print("\n[*] Extracting new firmware rollback indices (from 'image' folder)...")
+    new_boot_img = IMAGE_DIR / "boot.img"
+    new_vbmeta_img = IMAGE_DIR / "vbmeta_system.img"
+
+    if not new_boot_img.exists() or not new_vbmeta_img.exists():
+        print(f"[!] Error: 'boot.img' or 'vbmeta_system.img' not found in '{IMAGE_DIR.name}' folder.")
+        return 'MISSING_NEW', 0, 0
+        
+    new_boot_rb = 0
+    new_vbmeta_rb = 0
     try:
-        new_boot_info = extract_image_avb_info(INPUT_NEW_DIR / "boot.img")
+        new_boot_info = extract_image_avb_info(new_boot_img)
         new_boot_rb = int(new_boot_info.get('rollback', '0'))
         
-        new_vbmeta_info = extract_image_avb_info(INPUT_NEW_DIR / "vbmeta_system.img")
+        new_vbmeta_info = extract_image_avb_info(new_vbmeta_img)
         new_vbmeta_rb = int(new_vbmeta_info.get('rollback', '0'))
     except Exception as e:
         print(f"[!] Error reading new image info: {e}. Please check files.", file=sys.stderr)
-        return
+        return 'ERROR', 0, 0
 
     print(f"  > New Boot Index: {new_boot_rb}")
     print(f"  > New VBMeta System Index: {new_vbmeta_rb}")
 
-    if new_boot_rb >= current_boot_rb and new_vbmeta_rb >= current_vbmeta_rb:
-        print("\n[+] New firmware indices are the same or higher.")
-        print("This is not a downgrade. No patching is necessary.")
-        print("Press Enter to exit.")
-        try:
-            input()
-        except EOFError:
-            pass
-        return
+    if new_boot_rb < current_boot_rb or new_vbmeta_rb < current_vbmeta_rb:
+        print("\n[!] Downgrade detected! Anti-Rollback patching is REQUIRED.")
+        return 'NEEDS_PATCH', current_boot_rb, current_vbmeta_rb
+    else:
+        print("\n[+] Indices are same or higher. No Anti-Rollback patch needed.")
+        return 'MATCH', 0, 0
 
-    print("\n[!] Downgrade detected! Bypassing anti-rollback...")
+def read_anti_rollback():
+    print("--- Anti-Rollback Status Check ---")
+    check_dependencies()
+    edl_ng_exe = _ensure_edl_ng()
     
     try:
+        status, _, _ = _compare_rollback_indices(edl_ng_exe)
+        print(f"\n--- Status Check Complete: {status} ---")
+    except Exception as e:
+        print(f"\n[!] An error occurred during status check: {e}", file=sys.stderr)
+
+def patch_anti_rollback():
+    print("--- Anti-Rollback Patcher ---")
+    check_dependencies()
+    edl_ng_exe = _ensure_edl_ng()
+
+    if OUTPUT_ANTI_ROLLBACK_DIR.exists():
+        shutil.rmtree(OUTPUT_ANTI_ROLLBACK_DIR)
+    OUTPUT_ANTI_ROLLBACK_DIR.mkdir(exist_ok=True)
+    
+    try:
+        status, current_boot_rb, current_vbmeta_rb = _compare_rollback_indices(edl_ng_exe)
+
+        if status != 'NEEDS_PATCH':
+            print("\n[!] No patching is required or files are missing. Aborting patch.")
+            return
+
+        print("\n--- [STEP 3] Patching New Firmware ---")
+        
         patch_chained_image_rollback(
             image_name="boot.img",
             current_rb_index=current_boot_rb,
-            new_image_path=(INPUT_NEW_DIR / "boot.img"),
+            new_image_path=(IMAGE_DIR / "boot.img"),
             patched_image_path=(OUTPUT_ANTI_ROLLBACK_DIR / "boot.img")
         )
         
@@ -1244,19 +1260,81 @@ def anti_rollback():
         patch_vbmeta_image_rollback(
             image_name="vbmeta_system.img",
             current_rb_index=current_vbmeta_rb,
-            new_image_path=(INPUT_NEW_DIR / "vbmeta_system.img"),
+            new_image_path=(IMAGE_DIR / "vbmeta_system.img"),
             patched_image_path=(OUTPUT_ANTI_ROLLBACK_DIR / "vbmeta_system.img")
         )
 
         print("\n" + "=" * 61)
         print("  SUCCESS!")
         print(f"  Anti-rollback patched images are in '{OUTPUT_ANTI_ROLLBACK_DIR.name}'.")
-        print(f"  You can now flash these images to downgrade.")
+        print("  You can now run 'Write Anti-Rollback' (Menu 8).")
         print("=" * 61)
 
     except Exception as e:
         print(f"\n[!] An error occurred during patching: {e}", file=sys.stderr)
         shutil.rmtree(OUTPUT_ANTI_ROLLBACK_DIR) 
+
+def write_anti_rollback(skip_reset=False):
+    print("--- Starting Anti-Rollback Write Process ---")
+
+    edl_ng_exe = _ensure_edl_ng()
+
+    boot_img = OUTPUT_ANTI_ROLLBACK_DIR / "boot.img"
+    vbmeta_img = OUTPUT_ANTI_ROLLBACK_DIR / "vbmeta_system.img"
+
+    if not boot_img.exists() or not vbmeta_img.exists():
+        print(f"[!] Error: Patched images not found in '{OUTPUT_ANTI_ROLLBACK_DIR.name}'.", file=sys.stderr)
+        print("[!] Please run 'Patch Anti-Rollback' (Menu 7) first.", file=sys.stderr)
+        raise FileNotFoundError(f"Patched images not found in {OUTPUT_ANTI_ROLLBACK_DIR.name}")
+    print(f"[+] Found patched images folder: '{OUTPUT_ANTI_ROLLBACK_DIR.name}'.")
+
+    if not skip_reset:
+        print(f"--- Waiting for EDL Loader File ---")
+        required_files = [EDL_LOADER_FILENAME]
+        prompt = (
+            f"[STEP 1] Place the EDL loader file ('{EDL_LOADER_FILENAME}')\n"
+            f"         into the '{IMAGE_DIR.name}' folder to proceed."
+        )
+        IMAGE_DIR.mkdir(exist_ok=True) 
+        wait_for_files(IMAGE_DIR, required_files, prompt)
+        print(f"[+] Loader file '{EDL_LOADER_FILE.name}' found in '{IMAGE_DIR.name}'.")
+
+        wait_for_edl()
+    
+    try:
+        print(f"\n[*] Attempting to write 'boot' partition...")
+        run_command([
+            str(edl_ng_exe),
+            "--loader", str(EDL_LOADER_FILE), 
+            "write-part", "boot", str(boot_img)
+        ])
+        print("[+] Successfully wrote 'boot'.")
+
+        print(f"\n[*] Attempting to write 'vbmeta_system' partition...")
+        run_command([
+            str(edl_ng_exe),
+            "--loader", str(EDL_LOADER_FILE), 
+            "write-part", "vbmeta_system", str(vbmeta_img)
+        ])
+        print("[+] Successfully wrote 'vbmeta_system'.")
+
+        if not skip_reset:
+            print("\n[*] Operations complete. Resetting device...")
+            run_command([
+                str(edl_ng_exe),
+                "--loader", str(EDL_LOADER_FILE), 
+                "reset"
+            ])
+            print("[+] Device reset command sent.")
+        else:
+            print("\n[*] Operations complete. Skipping device reset as requested.")
+
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"[!] An error occurred during the EDL write operation: {e}", file=sys.stderr)
+        raise
+    
+    print("\n--- Anti-Rollback Write Process Finished ---")
+
 
 def clean_workspace():
     print("--- Starting Cleanup Process ---")
@@ -1444,17 +1522,17 @@ def modify_xml():
     print("\n" + "=" * 61)
     print("  SUCCESS!")
     print(f"  Modified XML files are ready in the '{OUTPUT_XML_DIR.name}'.")
-    print("  You can now run 'Flash EDL' (Menu 8).")
+    print("  You can now run 'Flash EDL' (Menu 10).")
     print("=" * 61)
 
-def flash_edl(skip_reset=False):
+def flash_edl(skip_reset=False, skip_reset_edl=False):
     print("--- Starting Full EDL Flash Process ---")
     
     edl_ng_exe = _ensure_edl_ng()
 
     if not IMAGE_DIR.is_dir() or not any(IMAGE_DIR.iterdir()):
         print(f"[!] Error: The '{IMAGE_DIR.name}' folder is missing or empty.")
-        print("[!] Please run 'Modify XML for Update' (Menu 7) first.")
+        print("[!] Please run 'Modify XML for Update' (Menu 9) first.")
         raise FileNotFoundError(f"{IMAGE_DIR.name} is missing or empty.")
         
     loader_path = EDL_LOADER_FILE_IMAGE
@@ -1463,19 +1541,20 @@ def flash_edl(skip_reset=False):
         print("[!] Please copy it to the 'image' folder (from firmware).")
         raise FileNotFoundError(f"{loader_path.name} not found in {IMAGE_DIR.name}")
 
-    print("\n" + "="*61)
-    print("  WARNING: PROCEEDING WILL OVERWRITE FILES IN YOUR 'image'")
-    print("           FOLDER WITH ANY PATCHED FILES YOU HAVE CREATED")
-    print("           (e.g., from Menu 1, 5, 6, or 7).")
-    print("="*61 + "\n")
-    
-    choice = ""
-    while choice not in ['y', 'n']:
-        choice = input("Are you sure you want to continue? (y/n): ").lower().strip()
+    if not skip_reset_edl:
+        print("\n" + "="*61)
+        print("  WARNING: PROCEEDING WILL OVERWRITE FILES IN YOUR 'image'")
+        print("           FOLDER WITH ANY PATCHED FILES YOU HAVE CREATED")
+        print("           (e.g., from Menu 1, 5, 7, or 9).")
+        print("="*61 + "\n")
+        
+        choice = ""
+        while choice not in ['y', 'n']:
+            choice = input("Are you sure you want to continue? (y/n): ").lower().strip()
 
-    if choice == 'n':
-        print("[*] Operation cancelled.")
-        return
+        if choice == 'n':
+            print("[*] Operation cancelled.")
+            return
 
     print("\n[*] Copying patched files to 'image' folder (overwriting)...")
     output_folders_to_copy = [
@@ -1531,37 +1610,55 @@ def flash_edl(skip_reset=False):
 
     if not OUTPUT_DP_DIR.exists() or (not patched_devinfo.exists() and not patched_persist.exists()):
         print(f"[*] '{OUTPUT_DP_DIR.name}' not found or is empty. Skipping devinfo/persist flash.")
-        if not skip_reset:
-            print("[*] Attempting to reset device...")
+    else:
+        print("[*] 'output_dp' folder found. Proceeding to flash devinfo/persist...")
+        
+        if not skip_reset_edl:
+            print("\n[*] Resetting device back into EDL mode for devinfo/persist flash...")
             try:
                 run_command([
                     str(edl_ng_exe),
                     "--loader", str(loader_path), 
-                    "reset"
+                    "reset", "edl"
                 ])
-                print("[+] Device reset command sent.")
+                print("[+] Device reset-to-EDL command sent.")
             except Exception as e:
-                 print(f"[!] Failed to reset device: {e}", file=sys.stderr)
-        else:
-            print("[*] Skipping device reset as requested.")
-    else:
-        print("[*] 'output_dp' folder found. Proceeding to flash devinfo/persist...")
+                 print(f"[!] Failed to reset device to EDL: {e}", file=sys.stderr)
+                 print("[!] Please manually reboot to EDL mode.")
+            
+            wait_for_edl() 
         
-        print("\n[*] Resetting device back into EDL mode for devinfo/persist flash...")
+        write_edl(skip_reset=True, skip_reset_edl=True)
+
+    print("\n--- [STEP 3] Flashing patched Anti-Rollback images ---")
+    arb_boot = OUTPUT_ANTI_ROLLBACK_DIR / "boot.img"
+    arb_vbmeta = OUTPUT_ANTI_ROLLBACK_DIR / "vbmeta_system.img"
+
+    if not OUTPUT_ANTI_ROLLBACK_DIR.exists() or (not arb_boot.exists() and not arb_vbmeta.exists()):
+        print(f"[*] '{OUTPUT_ANTI_ROLLBACK_DIR.name}' not found or is empty. Skipping Anti-Rollback flash.")
+    else:
+        print(f"[*] '{OUTPUT_ANTI_ROLLBACK_DIR.name}' found. Proceeding to flash Anti-Rollback images...")
+        if skip_reset_edl:
+             print("[*] Assuming device is still in EDL mode from previous step...")
+        else:
+            print("\n[!] CRITICAL: This flow is not intended to be run manually.")
+            print("[!] Please use the 'Patch and Flash' (Menu 1) option.")
+            
+        write_anti_rollback(skip_reset=True)
+
+    if not skip_reset:
+        print("\n[*] Final step: Resetting device to system...")
         try:
             run_command([
                 str(edl_ng_exe),
                 "--loader", str(loader_path), 
-                "reset", "edl"
+                "reset"
             ])
-            print("[+] Device reset-to-EDL command sent.")
+            print("[+] Device reset command sent.")
         except Exception as e:
-             print(f"[!] Failed to reset device to EDL: {e}", file=sys.stderr)
-             print("[!] Please manually reboot to EDL mode.")
-        
-        wait_for_edl() 
-        
-        write_edl(skip_reset=skip_reset) 
+             print(f"[!] Failed to reset device: {e}", file=sys.stderr)
+    else:
+        print("[*] Skipping final device reset as requested.")
 
     if not skip_reset:
         print("\n--- Full EDL Flash Process Finished ---")
@@ -1569,7 +1666,7 @@ def flash_edl(skip_reset=False):
 def patch_all():
     print("--- Starting Automated Patch & Flash ROW ROM Process ---")
     
-    print("\n--- [STEP 1/5] Waiting for RSA Firmware 'image' folder ---")
+    print("\n--- [STEP 1/7] Waiting for RSA Firmware 'image' folder ---")
     prompt = (
         "Please copy the entire 'image' folder from your\n"
         "         unpacked Lenovo RSA firmware into the main directory.\n"
@@ -1580,34 +1677,41 @@ def patch_all():
     
     try:
         print("\n" + "="*61)
-        print("  STEP 2/5: Converting ROM (PRC to ROW)")
+        print("  STEP 2/7: Converting ROM (PRC to ROW)")
         print("="*61)
         convert_images()
-        print("\n--- [STEP 2/5] ROM Conversion SUCCESS ---")
+        print("\n--- [STEP 2/7] ROM Conversion SUCCESS ---")
 
         print("\n" + "="*61)
-        print("  STEP 3/5: Modifying XML Files")
+        print("  STEP 3/7: Modifying XML Files")
         print("="*61)
         modify_xml()
-        print("\n--- [STEP 3/5] XML Modification SUCCESS ---")
+        print("\n--- [STEP 3/7] XML Modification SUCCESS ---")
         
         print("\n" + "="*61)
-        print("  STEP 4/5: Dumping devinfo/persist for patching")
+        print("  STEP 4/7: Dumping devinfo/persist for patching")
         print("="*61)
         read_edl()
-        print("\n--- [STEP 4/5] Dump SUCCESS ---")
+        print("\n--- [STEP 4/7] Dump SUCCESS ---")
         
         print("\n" + "="*61)
-        print("  STEP 5/5: Patching devinfo/persist")
+        print("  STEP 5/7: Patching devinfo/persist")
         print("="*61)
         edit_devinfo_persist()
-        print("\n--- [STEP 5/5] Patching SUCCESS ---")
+        print("\n--- [STEP 5/7] Patching SUCCESS ---")
+        
+        print("\n" + "="*61)
+        print("  STEP 6/7: Checking and Patching Anti-Rollback")
+        print("="*61)
+        read_anti_rollback()
+        patch_anti_rollback()
+        print("\n--- [STEP 6/7] Anti-Rollback Check/Patch SUCCESS ---")
         
         print("\n" + "="*61)
         print("  [FINAL STEP] Flashing All Images via EDL")
         print("="*61)
         print("The device will now be flashed with all modified images.")
-        flash_edl()
+        flash_edl(skip_reset_edl=True) 
         
         print("\n" + "=" * 61)
         print("  FULL PROCESS COMPLETE!")
@@ -1639,7 +1743,9 @@ def main():
     subparsers.add_parser("edit_dp", help="Edit devinfo and persist images.")
     subparsers.add_parser("read_edl", help="Read devinfo and persist images via EDL.")
     subparsers.add_parser("write_edl", help="Write patched devinfo and persist images via EDL.")
-    subparsers.add_parser("anti_rollback", help="Bypass anti-rollback (downgrade) protection by patching firmware indices.")
+    subparsers.add_parser("read_anti_rollback", help="Read and Compare Anti-Rollback indices.")
+    subparsers.add_parser("patch_anti_rollback", help="Patch firmware images to bypass Anti-Rollback.")
+    subparsers.add_parser("write_anti_rollback", help="Flash patched Anti-Rollback images via EDL.")
     subparsers.add_parser("clean", help="Remove downloaded tools, I/O folders, and temp files.")
     subparsers.add_parser("modify_xml", help="Modify XML files from RSA firmware for flashing.")
     subparsers.add_parser("flash_edl", help="Flash the entire modified firmware via EDL.")
@@ -1660,8 +1766,12 @@ def main():
             read_edl()
         elif args.command == "write_edl":
             write_edl()
-        elif args.command == "anti_rollback":
-            anti_rollback()
+        elif args.command == "read_anti_rollback":
+            read_anti_rollback()
+        elif args.command == "patch_anti_rollback":
+            patch_anti_rollback()
+        elif args.command == "write_anti_rollback":
+            write_anti_rollback()
         elif args.command == "clean":
             clean_workspace()
         elif args.command == "modify_xml":
