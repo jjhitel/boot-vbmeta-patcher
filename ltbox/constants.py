@@ -60,3 +60,25 @@ KEY_MAP = {
     "2597c218aae470a130f61162feaae70afd97f011": AVB_DIR / "testkey_rsa4096.pem",
     "cdbb77177f731920bbe0a0f94f84d9038ae0617d": AVB_DIR / "testkey_rsa2048.pem"
 }
+
+# --- Country Codes for devinfo/persist patching ---
+COUNTRY_CODES = {
+    "AE": "United Arab Emirates", "AM": "Armenia", "AR": "Argentina", "AT": "Austria", "AU": "Australia",
+    "AZ": "Azerbaijan", "BE": "Belgium", "BG": "Bulgaria", "BH": "Bahrain", "BR": "Brazil",
+    "CA": "Canada", "CH": "Switzerland", "CL": "Chile", "CO": "Colombia", "CR": "Costa Rica",
+    "CY": "Cyprus", "CZ": "Czech Republic", "DE": "Germany", "DK": "Denmark", "EC": "Ecuador",
+    "EE": "Estonia", "EG": "Egypt", "ES": "Spain", "FI": "Finland", "FR": "France",
+    "GB": "United Kingdom", "GE": "Georgia", "GH": "Ghana", "GR": "Greece", "GT": "Guatemala",
+    "HK": "Hong Kong", "HR": "Croatia", "HU": "Hungary", "ID": "Indonesia", "IL": "Israel",
+    "IN": "India", "IS": "Iceland", "IT": "Italy", "JO": "Jordan", "JP": "Japan",
+    "KE": "Kenya", "KG": "Kyrgyzstan", "KR": "Korea", "KW": "Kuwait", "KZ": "Kazakhstan",
+    "LB": "Lebanon", "LT": "Lithuania", "LV": "Latvia", "MA": "Morocco", "MD": "Moldova",
+    "MX": "Mexico", "MY": "Malaysia", "MZ": "Mozambique", "NG": "Nigeria", "NL": "Netherlands",
+    "NO": "Norway", "NZ": "New Zealand", "OM": "Oman", "PA": "Panama", "PE": "Peru",
+    "PH": "Philippines", "PK": "Pakistan", "PL": "Poland", "PT": "Portugal", "QA": "Qatar",
+    "RO": "Romania", "RS": "Serbia", "RU": "Russia", "SA": "Saudi Arabia", "SE": "Sweden",
+    "SG": "Singapore", "SI": "Slovenia", "SK": "Slovakia", "SV": "El Salvador", "TH": "Thailand",
+    "TJ": "Tajikistan", "TN": "Tunisia", "TR": "Turkey", "TW": "Taiwan", "TZ": "Tanzania",
+    "UA": "Ukraine", "UG": "Uganda", "US": "United States of America", "UY": "Uruguay",
+    "UZ": "Uzbekistan", "VE": "Venezuela", "VN": "Vietnam", "ZA": "South Africa"
+}

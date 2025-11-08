@@ -402,14 +402,21 @@ def edit_vendor_boot(input_file_path):
         print(f"An error occurred while processing '{input_file.name}': {e}", file=sys.stderr)
         sys.exit(1)
 
-def edit_devinfo_persist():
+def edit_devinfo_persist(country_code):
     files_to_process = {
         "devinfo.img": "devinfo_modified.img",
         "persist.img": "persist_modified.img"
     }
-    
+
     target = b"CNXX"
-    replacement = b"\x00\x00\x00\x00"
+    
+    if not country_code or len(country_code) != 2:
+        print(f"[!] Error: Invalid country code '{country_code}' received by patcher. Aborting.", file=sys.stderr)
+        sys.exit(1)
+        
+    replacement_string = f"{country_code.upper()}XX"
+    replacement = replacement_string.encode('ascii')
+    
     total_found_count = 0
 
     for input_filename, output_filename in files_to_process.items():
@@ -427,7 +434,7 @@ def edit_devinfo_persist():
             count = content.count(target)
             
             if count > 0:
-                print(f"Found '{target.decode('ascii')}' pattern {count} time(s). Replacing...")
+                print(f"Found '{target.decode('ascii')}' pattern {count} time(s). Replacing with '{replacement_string}'...")
                 modified_content = content.replace(target, replacement)
                 output_file.write_bytes(modified_content)
                 total_found_count += count

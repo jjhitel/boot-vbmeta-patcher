@@ -211,7 +211,6 @@ def root_boot_only():
     shutil.copy(boot_img, WORK_DIR / "boot.img")
     boot_img.unlink()
     
-    # Call the algorithm
     patched_boot_path = imgpatch.patch_boot_with_root_algo(WORK_DIR, magiskboot_exe, fetch_exe)
 
     if patched_boot_path and patched_boot_path.exists():
@@ -235,6 +234,50 @@ def root_boot_only():
         print("=" * 61)
     else:
         print("[!] Patched boot image was not created. An error occurred during the process.", file=sys.stderr)
+
+def select_country_code():
+    print("\n--- SELECT COUNTRY CODE FOR PATCHING ---")
+    print("Please select a country from the list below to patch 'CNXX' in devinfo/persist.")
+    print("This will change the region code of your device.")
+
+    if not COUNTRY_CODES:
+        print("[!] Error: COUNTRY_CODES not found in constants.py. Aborting.", file=sys.stderr)
+        raise ImportError("COUNTRY_CODES missing from constants.py")
+
+    sorted_countries = sorted(COUNTRY_CODES.items(), key=lambda item: item[1])
+
+    num_cols = 3
+    col_width = 38 
+    
+    line_width = col_width * num_cols
+    print("-" * line_width)
+    
+    for i in range(0, len(sorted_countries), num_cols):
+        line = []
+        for j in range(num_cols):
+            idx = i + j
+            if idx < len(sorted_countries):
+                code, name = sorted_countries[idx]
+                line.append(f"{idx+1:3d}. {name} ({code})".ljust(col_width))
+        print("".join(line))
+    print("-" * line_width)
+
+    while True:
+        try:
+            choice = input(f"Enter the number corresponding to your desired country (1-{len(sorted_countries)}): ")
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(sorted_countries):
+                selected_code = sorted_countries[choice_idx][0]
+                selected_name = sorted_countries[choice_idx][1]
+                print(f"[+] You selected: {selected_name} ({selected_code})")
+                return selected_code
+            else:
+                print("[!] Invalid number. Please enter a number within the range.")
+        except ValueError:
+            print("[!] Invalid input. Please enter a number.")
+        except (KeyboardInterrupt, EOFError):
+            print("\n[!] Country selection cancelled by user. Exiting.")
+            sys.exit(1)
 
 def edit_devinfo_persist():
     print("--- Starting devinfo & persist patching process ---")
@@ -299,8 +342,10 @@ def edit_devinfo_persist():
         shutil.rmtree(OUTPUT_DP_DIR)
     OUTPUT_DP_DIR.mkdir(exist_ok=True)
 
+    selected_country_code = select_country_code()
+    
     print("[*] Running patch script...")
-    imgpatch.edit_devinfo_persist()
+    imgpatch.edit_devinfo_persist(selected_country_code)
 
     modified_devinfo = BASE_DIR / "devinfo_modified.img"
     modified_persist = BASE_DIR / "persist_modified.img"

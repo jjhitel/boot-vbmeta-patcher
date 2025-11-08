@@ -73,7 +73,7 @@ echo   ==========================================================
 echo.
 echo     1. Convert PRC to ROW in ROM
 echo     2. Dump devinfo/persist from device
-echo     3. Patch devinfo/persist to reset region code
+echo     3. Patch devinfo/persist to change region code
 echo     4. Write devinfo/persist to device
 echo     5. Detect Anti-Rollback from device
 echo     6. Patch rollback indices in ROM
@@ -92,7 +92,7 @@ set /p "ADV_CHOICE=    Enter your choice (1-11, m): "
 
 if "%ADV_CHOICE%"=="1" call :run_task convert "Convert PRC to ROW in ROM"
 if "%ADV_CHOICE%"=="2" call :run_task read_edl "Dump devinfo/persist from device"
-if "%ADV_CHOICE%"=="3" call :run_task edit_dp "Patch devinfo/persist to reset region code"
+if "%ADV_CHOICE%"=="3" call :run_task edit_dp "Patch devinfo/persist to change region code"
 if "%ADV_CHOICE%"=="4" call :run_task write_edl "Write devinfo/persist to device"
 if "%ADV_CHOICE%"=="5" call :run_task read_anti_rollback "Detect Anti-Rollback from device"
 if "%ADV_CHOICE%"=="6" call :run_task patch_anti_rollback "Patch rollback indices in ROM"
