@@ -90,10 +90,13 @@ def _ensure_edl_ng():
         
         with zipfile.ZipFile(downloaded_zip_path, 'r') as zip_ref:
             edl_info = None
+            libusb_info = None
+            
             for member in zip_ref.infolist():
                 if member.filename.endswith('edl-ng.exe'):
                     edl_info = member
-                    break
+                elif member.filename.endswith('libusb-1.0.dll'):
+                    libusb_info = member
             
             if not edl_info:
                 raise FileNotFoundError("edl-ng.exe not found inside the downloaded zip archive.")
@@ -103,12 +106,30 @@ def _ensure_edl_ng():
             extracted_path = TOOLS_DIR / edl_info.filename
             if extracted_path != edl_ng_exe:
                 shutil.move(extracted_path, edl_ng_exe)
-                parent_dir = extracted_path.parent
-                if parent_dir.is_dir() and parent_dir != TOOLS_DIR:
+            
+            extracted_libusb_path = None
+            if libusb_info:
+                libusb_dll_path = TOOLS_DIR / "libusb-1.0.dll"
+                zip_ref.extract(libusb_info, path=TOOLS_DIR)
+                extracted_libusb_path = TOOLS_DIR / libusb_info.filename
+                if extracted_libusb_path != libusb_dll_path:
+                    shutil.move(extracted_libusb_path, libusb_dll_path)
+
+            parent_dir = extracted_path.parent
+            if parent_dir.is_dir() and parent_dir != TOOLS_DIR:
+                try:
+                    parent_dir.rmdir()
+                except OSError:
+                    shutil.rmtree(parent_dir, ignore_errors=True)
+
+            if extracted_libusb_path:
+                libusb_parent_dir = extracted_libusb_path.parent
+                if libusb_parent_dir.is_dir() and libusb_parent_dir != TOOLS_DIR and libusb_parent_dir != parent_dir:
                     try:
-                        parent_dir.rmdir()
+                        libusb_parent_dir.rmdir()
                     except OSError:
-                        shutil.rmtree(parent_dir, ignore_errors=True)
+                        shutil.rmtree(libusb_parent_dir, ignore_errors=True)
+
 
         downloaded_zip_path.unlink()
         print("[+] edl-ng download and extraction successful.")

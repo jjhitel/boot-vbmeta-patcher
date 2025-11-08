@@ -19,6 +19,7 @@ tools/edl-ng.exe
 tools/fetch.exe
 tools/kernelsu.ko
 tools/ksuinit
+tools/libusb-1.0.dll
 tools/magiskboot.exe
 tools/platform-tools/
 tools/tmp_patch/
