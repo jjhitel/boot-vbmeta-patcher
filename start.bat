@@ -2,6 +2,9 @@
 chcp 65001 > nul
 setlocal
 
+set "SKIP_ADB=0"
+set "SKIP_ADB_STATE=OFF"
+
 :: --- 1. Initialization and Dependency Check ---
 echo --- Initializing LTBox... ---
 call "%~dp0ltbox\install.bat"
@@ -23,7 +26,8 @@ if not exist "%PYTHON_EXE%" (
 )
 if not exist "%MAIN_PY%" (
     echo [!] Main script not found at: %MAIN_PY%
-    pause
+   
+ pause
     goto :eof
 )
 
@@ -40,6 +44,7 @@ echo     2. Update ROW firmware on PRC device (NO WIPE)
 echo     3. Disable OTA
 echo     4. Root device
 echo     5. Unroot device
+echo     6. Skip ADB [%SKIP_ADB_STATE%]
 echo.
 echo     a. Advanced
 echo     x. Exit
@@ -54,6 +59,7 @@ if /I "%CHOICE%"=="2" call :run_task patch_all "Update ROW firmware (NO WIPE)"
 if /I "%CHOICE%"=="3" call :run_task disable_ota "Disable OTA"
 if /I "%CHOICE%"=="4" call :run_task root_device "Root device"
 if /I "%CHOICE%"=="5" call :run_task unroot_device "Unroot device"
+if /I "%CHOICE%"=="6" goto :toggle_skip_adb
 if /I "%CHOICE%"=="a" goto :advanced_menu
 if /I "%CHOICE%"=="x" goto :cleanup
 
@@ -61,6 +67,16 @@ if /I "%CHOICE%"=="x" goto :cleanup
 echo.
 echo     [!] Invalid choice.
 pause
+goto :main_menu
+
+:toggle_skip_adb
+if "%SKIP_ADB%"=="0" (
+    set "SKIP_ADB=1"
+    set "SKIP_ADB_STATE=ON"
+) else (
+    set "SKIP_ADB=0"
+    set "SKIP_ADB_STATE=OFF"
+)
 goto :main_menu
 
 
@@ -81,9 +97,9 @@ echo     6. Patch rollback indices in ROM
 echo     7. Write Anti-Anti-Rollback to device
 echo     8. Convert x files to xml (WIPE DATA)
 echo     9. Convert x files to xml ^& Modify (NO WIPE)
-echo     10. Flash firmware to device
+echo    10. Flash firmware to device
 echo.
-echo     11. Clean workspace
+echo    11. Clean workspace
 echo     m. Back to Main
 echo.
 echo   ==========================================================

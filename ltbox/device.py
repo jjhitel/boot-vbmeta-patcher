@@ -10,7 +10,10 @@ from ltbox.constants import *
 from ltbox import utils
 
 # --- ADB Device Handling ---
-def wait_for_adb():
+def wait_for_adb(skip_adb=False):
+    if skip_adb:
+        print("[!] Skipping ADB connection as requested.")
+        return
     print("\n--- WAITING FOR ADB DEVICE ---")
     print("[!] Please enable USB Debugging on your device, connect it via USB.")
     print("[!] A 'Allow USB debugging?' prompt will appear on your device.")
@@ -22,7 +25,10 @@ def wait_for_adb():
         print(f"[!] Error waiting for ADB device: {e}", file=sys.stderr)
         raise
 
-def get_device_model():
+def get_device_model(skip_adb=False):
+    if skip_adb:
+        print("[!] Skipping device model check as requested.")
+        return None
     print("[*] Getting device model via ADB...")
     try:
         result = utils.run_command([str(ADB_EXE), "shell", "getprop", "ro.product.model"], capture=True)
@@ -37,7 +43,10 @@ def get_device_model():
         print("[!] Please ensure the device is connected and authorized.")
         return None
 
-def reboot_to_edl():
+def reboot_to_edl(skip_adb=False):
+    if skip_adb:
+        print("[!] You requested Skip ADB, so please reboot to EDL manually.")
+        return
     print("[*] Attempting to reboot device to EDL mode via ADB...")
     try:
         utils.run_command([str(ADB_EXE), "reboot", "edl"])

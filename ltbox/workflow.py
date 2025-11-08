@@ -5,7 +5,7 @@ import shutil
 from ltbox.constants import *
 from ltbox import utils, device, actions
 
-def patch_all(wipe=0):
+def patch_all(wipe=0, skip_adb=False):
     
     print("--- [STEP 1/9] Cleaning up previous output folders ---")
     output_folders_to_clean = [
@@ -32,9 +32,9 @@ def patch_all(wipe=0):
     print("\n" + "="*61)
     print("  STEP 2/9: Waiting for ADB Connection")
     print("="*61)
-    device.wait_for_adb()
-    device_model = device.get_device_model()
-    if not device_model:
+    device.wait_for_adb(skip_adb=skip_adb)
+    device_model = device.get_device_model(skip_adb=skip_adb)
+    if not device_model and not skip_adb:
         raise SystemExit("Failed to get device model via ADB.")
     print("\n--- [STEP 2/9] ADB Device Found SUCCESS ---")
     
@@ -51,7 +51,7 @@ def patch_all(wipe=0):
         print("\n" + "="*61)
         print("  STEP 4/9: Converting Firmware (PRC to ROW) & Validating Model")
         print("="*61)
-        actions.convert_images(device_model=device_model)
+        actions.convert_images(device_model=device_model, skip_adb=skip_adb)
         print("\n--- [STEP 4/9] Firmware Conversion & Validation SUCCESS ---")
 
         print("\n" + "="*61)
@@ -63,7 +63,7 @@ def patch_all(wipe=0):
         print("\n" + "="*61)
         print("  STEP 6/9: Dumping devinfo/persist for patching")
         print("="*61)
-        actions.read_edl()
+        actions.read_edl(skip_adb=skip_adb)
         print("\n--- [STEP 6/9] Dump SUCCESS ---")
         
         print("\n" + "="*61)

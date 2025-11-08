@@ -48,22 +48,24 @@ def main():
 
 
     args = parser.parse_args()
+    
+    skip_adb = os.environ.get('SKIP_ADB', '0') == '1'
 
     try:
         if args.command == "convert":
             actions.convert_images()
         elif args.command == "root_device":
-            actions.root_device()
+            actions.root_device(skip_adb=skip_adb)
         elif args.command == "unroot_device":
-            actions.unroot_device()
+            actions.unroot_device(skip_adb=skip_adb)
         elif args.command == "root":
             actions.root_boot_only()
         elif args.command == "disable_ota":
-            actions.disable_ota()
+            actions.disable_ota(skip_adb=skip_adb)
         elif args.command == "edit_dp":
             actions.edit_devinfo_persist()
         elif args.command == "read_edl":
-            actions.read_edl()
+            actions.read_edl(skip_adb=skip_adb)
         elif args.command == "write_edl":
             actions.write_edl()
         elif args.command == "read_anti_rollback":
@@ -81,9 +83,9 @@ def main():
         elif args.command == "flash_edl":
             actions.flash_edl()
         elif args.command == "patch_all":
-            workflow.patch_all(wipe=0)
+            workflow.patch_all(wipe=0, skip_adb=skip_adb)
         elif args.command == "patch_all_wipe":
-            workflow.patch_all(wipe=1)
+            workflow.patch_all(wipe=1, skip_adb=skip_adb)
         elif args.command == "info":
             utils.show_image_info(args.files)
     except (subprocess.CalledProcessError, FileNotFoundError, RuntimeError, KeyError) as e:

@@ -13,7 +13,7 @@ from ltbox import utils, device, imgpatch, downloader
 
 # --- Patch Actions ---
 
-def convert_images(device_model=None):
+def convert_images(device_model=None, skip_adb=False):
     utils.check_dependencies()
     
     print("--- Starting vendor_boot & vbmeta conversion process ---") 
@@ -62,7 +62,7 @@ def convert_images(device_model=None):
     vendor_boot_info = imgpatch.extract_image_avb_info(vendor_boot_bak)
     print("[+] Information extracted.\n")
 
-    if device_model:
+    if device_model and not skip_adb:
         print(f"[*] Validating firmware against device model '{device_model}'...")
         fingerprint_key = "com.android.build.vendor_boot.fingerprint"
         if fingerprint_key in vendor_boot_info:
@@ -419,14 +419,18 @@ def modify_xml(wipe=0):
     print("  You can now run 'Flash EDL' (Menu 10).")
     print("=" * 61)
 
-def disable_ota():
+def disable_ota(skip_adb=False):
+    if skip_adb:
+        print("[!] 'Disable OTA' was skipped as requested by Skip ADB setting.")
+        return
+    
     print("--- Starting Disable OTA Process ---")
     
     print("\n" + "="*61)
     print("  STEP 1/2: Waiting for ADB Connection")
     print("="*61)
     try:
-        device.wait_for_adb()
+        device.wait_for_adb(skip_adb=skip_adb)
         print("[+] ADB device connected.")
     except Exception as e:
         print(f"[!] Error waiting for ADB device: {e}", file=sys.stderr)
@@ -460,12 +464,13 @@ def disable_ota():
 
 # --- EDL Actions ---
 
-def read_edl():
+def read_edl(skip_adb=False):
     print("--- Starting EDL Read Process ---")
     
-    device.reboot_to_edl()
-    print("[*] Waiting for 10 seconds for device to enter EDL mode...")
-    time.sleep(10)
+    device.reboot_to_edl(skip_adb=skip_adb)
+    if not skip_adb:
+        print("[*] Waiting for 10 seconds for device to enter EDL mode...")
+        time.sleep(10)
     
     BACKUP_DIR.mkdir(exist_ok=True)
     devinfo_out = BACKUP_DIR / "devinfo.img"
@@ -888,7 +893,7 @@ def flash_edl(skip_reset=False, skip_reset_edl=False):
         print("\n--- Full EDL Flash Process Finished ---")
 
 
-def root_device():
+def root_device(skip_adb=False):
     print("--- Starting Root Device Process ---")
     
     print(f"[*] Cleaning up old '{OUTPUT_ROOT_DIR.name}' and '{WORKING_BOOT_DIR.name}' folders...")
@@ -912,12 +917,13 @@ def root_device():
     downloader._ensure_magiskboot(fetch_exe, magiskboot_exe)
 
     print("\n--- [STEP 1/6] Waiting for ADB Connection ---")
-    device.wait_for_adb()
+    device.wait_for_adb(skip_adb=skip_adb)
     
     print("\n--- [STEP 2/6] Rebooting to EDL Mode ---")
-    device.reboot_to_edl()
-    print("[*] Waiting for 10 seconds for device to enter EDL mode...")
-    time.sleep(10)
+    device.reboot_to_edl(skip_adb=skip_adb)
+    if not skip_adb:
+        print("[*] Waiting for 10 seconds for device to enter EDL mode...")
+        time.sleep(10)
 
     print(f"--- Waiting for EDL Loader File ---")
     required_files = [EDL_LOADER_FILENAME]
@@ -985,19 +991,20 @@ def root_device():
     print("\n--- Root Device Process Finished ---")
 
 
-def unroot_device():
+def unroot_device(skip_adb=False):
     print("--- Starting Unroot Device Process ---")
     
     backup_boot_file = BACKUP_BOOT_DIR / "boot.img"
     BACKUP_BOOT_DIR.mkdir(exist_ok=True)
 
     print("\n--- [STEP 1/5] Waiting for ADB Connection ---")
-    device.wait_for_adb()
+    device.wait_for_adb(skip_adb=skip_adb)
     
     print("\n--- [STEP 2/5] Rebooting to EDL Mode ---")
-    device.reboot_to_edl()
-    print("[*] Waiting for 10 seconds for device to enter EDL mode...")
-    time.sleep(10)
+    device.reboot_to_edl(skip_adb=skip_adb)
+    if not skip_adb:
+        print("[*] Waiting for 10 seconds for device to enter EDL mode...")
+        time.sleep(10)
 
     print(f"--- Waiting for EDL Loader File ---")
     required_files = [EDL_LOADER_FILENAME]
