@@ -413,7 +413,13 @@ def modify_xml(wipe=0, skip_dp=False):
                         content = f.read()
                     
                     content = re.sub(
-                        r'(<program.*label="persist".*filename=")(?:")(".*/>)',
+                        r'(<program[^>]*\blabel="persist"[^>]*filename=")[^"]*(".*/>)',
+                        r'\1persist.img\2',
+                        content,
+                        flags=re.IGNORECASE
+                    )
+                    content = re.sub(
+                        r'(<program[^>]*filename=")[^"]*("[^>]*\blabel="persist"[^>]*/>)',
                         r'\1persist.img\2',
                         content,
                         flags=re.IGNORECASE
@@ -436,7 +442,13 @@ def modify_xml(wipe=0, skip_dp=False):
                         content = f.read()
 
                     content = re.sub(
-                        r'(<program.*label="devinfo".*filename=")(?:")(".*/>)',
+                        r'(<program[^>]*\blabel="devinfo"[^>]*filename=")[^"]*(".*/>)',
+                        r'\1devinfo.img\2',
+                        content,
+                        flags=re.IGNORECASE
+                    )
+                    content = re.sub(
+                        r'(<program[^>]*filename=")[^"]*("[^>]*\blabel="devinfo"[^>]*/>)',
                         r'\1devinfo.img\2',
                         content,
                         flags=re.IGNORECASE
