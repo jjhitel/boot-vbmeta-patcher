@@ -86,14 +86,44 @@ def reboot_to_bootloader(skip_adb=False):
         raise
 
 # --- Fastboot Device Handling ---
+
+def check_fastboot_device(silent=False):
+    if not silent:
+        print("[*] Checking for fastboot device...")
+    try:
+        result = utils.run_command([str(FASTBOOT_EXE), "devices"], capture=True, check=False)
+        output = result.stdout.strip()
+        
+        if output:
+            if not silent:
+                print(f"[+] Fastboot device found:\n{output}")
+            return True
+        
+        if not silent:
+            print("[!] No fastboot device found.")
+            print("[!] Please connect your device in fastboot/bootloader mode.")
+        return False
+    
+    except Exception as e:
+        if not silent:
+            print(f"[!] Error checking for fastboot device: {e}", file=sys.stderr)
+        return False
+
 def wait_for_fastboot():
     print("\n--- WAITING FOR FASTBOOT DEVICE ---")
-    try:
-        utils.run_command([str(FASTBOOT_EXE), "wait-for-device"])
+    if check_fastboot_device(silent=True):
         print("[+] Fastboot device connected.")
-    except Exception as e:
-        print(f"[!] Error waiting for Fastboot device: {e}", file=sys.stderr)
-        raise
+        return True
+    
+    while not check_fastboot_device(silent=True):
+        print("[*] Waiting for fastboot device... (Press Ctrl+C to cancel)")
+        try:
+            time.sleep(2)
+        except KeyboardInterrupt:
+            print("\n[!] Fastboot wait cancelled by user.")
+            raise
+    print(f"[+] Fastboot device connected.")
+    return True
 
 def fastboot_reboot_system():
     print("[*] Attempting to reboot device to System via Fastboot...")
