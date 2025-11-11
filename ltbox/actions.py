@@ -992,20 +992,27 @@ def flash_edl(skip_reset=False, skip_reset_edl=False, skip_dp=False):
 
     raw_xmls = [f for f in IMAGE_DIR.glob("rawprogram*.xml") if f.name != "rawprogram0.xml"]
     patch_xmls = list(IMAGE_DIR.glob("patch*.xml"))
-    
-    if not skip_dp:
-        persist_write_xml = IMAGE_DIR / "rawprogram_write_persist_unsparse0.xml"
-        persist_save_xml = IMAGE_DIR / "rawprogram_save_persist_unsparse0.xml"
-        devinfo_write_xml = IMAGE_DIR / "rawprogram4_write_devinfo.xml"
-        devinfo_original_xml = IMAGE_DIR / "rawprogram4.xml"
-        
-        if persist_write_xml.exists():
-            print("[+] Using 'rawprogram_write_persist_unsparse0.xml' for persist flash.")
-            raw_xmls = [xml for xml in raw_xmls if xml.name != persist_save_xml.name]
-        
-        if devinfo_write_xml.exists():
-            print("[+] Using 'rawprogram4_write_devinfo.xml' for devinfo flash.")
-            raw_xmls = [xml for xml in raw_xmls if xml.name != devinfo_original_xml.name]
+
+    persist_write_xml = IMAGE_DIR / "rawprogram_write_persist_unsparse0.xml"
+    persist_save_xml = IMAGE_DIR / "rawprogram_save_persist_unsparse0.xml"
+    devinfo_write_xml = IMAGE_DIR / "rawprogram4_write_devinfo.xml"
+    devinfo_original_xml = IMAGE_DIR / "rawprogram4.xml"
+
+    if persist_write_xml.exists() and (IMAGE_DIR / "persist.img").exists() and not skip_dp:
+        print("[+] Using 'rawprogram_write_persist_unsparse0.xml' for persist flash.")
+        raw_xmls = [xml for xml in raw_xmls if xml.name != persist_save_xml.name]
+    else:
+        if persist_write_xml.exists() and any(xml.name == persist_write_xml.name for xml in raw_xmls):
+             print("[*] Skipping 'persist' flash (Image missing or skipped).")
+             raw_xmls = [xml for xml in raw_xmls if xml.name != persist_write_xml.name]
+
+    if devinfo_write_xml.exists() and (IMAGE_DIR / "devinfo.img").exists() and not skip_dp:
+        print("[+] Using 'rawprogram4_write_devinfo.xml' for devinfo flash.")
+        raw_xmls = [xml for xml in raw_xmls if xml.name != devinfo_original_xml.name]
+    else:
+        if devinfo_write_xml.exists() and any(xml.name == devinfo_write_xml.name for xml in raw_xmls):
+             print("[*] Skipping 'devinfo' flash (Image missing or skipped).")
+             raw_xmls = [xml for xml in raw_xmls if xml.name != devinfo_write_xml.name]
 
     if not raw_xmls or not patch_xmls:
         print(f"[!] Error: 'rawprogram*.xml' (excluding rawprogram0.xml) or 'patch*.xml' files not found in '{IMAGE_DIR.name}'.")
