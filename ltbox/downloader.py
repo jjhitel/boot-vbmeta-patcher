@@ -234,8 +234,7 @@ def ensure_edl_ng():
         fetch_command = [
             "--repo", EDL_NG_REPO_URL,
             "--tag", EDL_NG_TAG,
-            "--release-asset", asset_pattern,
-            str(DOWNLOAD_DIR)
+            "--release-asset", asset_pattern, str(DOWNLOAD_DIR)
         ]
         _run_fetch_command(fetch_command)
 
@@ -278,16 +277,16 @@ def ensure_edl_ng():
 
 def get_gki_kernel(kernel_version, work_dir):
     print("\n[3/8] Downloading GKI Kernel with fetch...")
-    asset_pattern = f".*{kernel_version}.*AnyKernel3.zip"
+    asset_pattern = f".*{kernel_version}.*Normal-AnyKernel3.zip"
     fetch_command = [
         "--repo", REPO_URL, "--tag", RELEASE_TAG,
         "--release-asset", asset_pattern, str(work_dir)
     ]
     _run_fetch_command(fetch_command)
 
-    downloaded_files = list(work_dir.glob(f"*{kernel_version}*AnyKernel3.zip"))
+    downloaded_files = list(work_dir.glob(f"*{kernel_version}*Normal-AnyKernel3.zip"))
     if not downloaded_files:
-        print(f"[!] Failed to download AnyKernel3.zip for kernel {kernel_version}.")
+        print(f"[!] Failed to download Normal AnyKernel3.zip for kernel {kernel_version}.")
         sys.exit(1)
     
     anykernel_zip = work_dir / ANYKERNEL_ZIP_FILENAME
