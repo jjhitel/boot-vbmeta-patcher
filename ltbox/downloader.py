@@ -306,16 +306,16 @@ def get_gki_kernel(kernel_version, work_dir):
     return kernel_image
 
 def download_ksu_apk(target_dir):
-    print("\n[7/8] Downloading KernelSU Manager APKs...")
-    if list(target_dir.glob("KernelSU*.apk")):
-        print("[+] KernelSU Next Manager APK already exists. Skipping download.")
+    print("\n[7/8] Downloading KernelSU Next Manager APKs (Spoofed)...")
+    if list(target_dir.glob("*spoofed*.apk")):
+        print("[+] KernelSU Next Manager (Spoofed) APK already exists. Skipping download.")
     else:
         ksu_apk_command = [
             "--repo", f"https://github.com/{KSU_APK_REPO}", "--tag", KSU_APK_TAG,
-            "--release-asset", ".*\\.apk", str(target_dir)
+            "--release-asset", ".*spoofed.*\\.apk", str(target_dir)
         ]
         _run_fetch_command(ksu_apk_command)
-        print("[+] KernelSU Next Manager APKs downloaded to the main directory (if found).")
+        print("[+] KernelSU Next Manager (Spoofed) APKs downloaded to the main directory (if found).")
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "install_base_tools":

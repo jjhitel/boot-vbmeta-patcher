@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ltbox.constants import *
-from ltbox import utils, device, imgpatch
+from ltbox import utils, device, imgpatch, downloader
 from ltbox.downloader import ensure_magiskboot
 
 # --- Patch Actions ---
@@ -1087,6 +1087,23 @@ def root_device(skip_adb=False):
 
     print("\n--- [STEP 1/6] Waiting for ADB Connection ---")
     device.wait_for_adb(skip_adb=skip_adb)
+
+    if not skip_adb:
+        print("\n[*] Checking & Installing KernelSU Next (Spoofed) APK...")
+        downloader.download_ksu_apk(BASE_DIR)
+        
+        ksu_apks = list(BASE_DIR.glob("*spoofed*.apk"))
+        if ksu_apks:
+            apk_path = ksu_apks[0]
+            print(f"[*] Installing {apk_path.name} via ADB...")
+            try:
+                utils.run_command([str(ADB_EXE), "install", "-r", str(apk_path)])
+                print("[+] APK installed successfully.")
+            except Exception as e:
+                print(f"[!] Failed to install APK: {e}")
+                print("[!] Proceeding with root process anyway...")
+        else:
+            print("[!] Spoofed APK not found. Skipping installation.")
     
     print("\n--- [STEP 2/6] Rebooting to EDL Mode ---")
     device.setup_edl_connection(skip_adb=skip_adb)
