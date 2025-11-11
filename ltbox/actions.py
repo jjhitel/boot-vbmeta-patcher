@@ -895,6 +895,8 @@ def write_anti_rollback(skip_reset=False):
 
 def flash_edl(skip_reset=False, skip_reset_edl=False, skip_dp=False):
     print("--- Starting Full EDL Flash Process ---")
+
+    skip_adb = os.environ.get('SKIP_ADB') == '1'
     
     if not IMAGE_DIR.is_dir() or not any(IMAGE_DIR.iterdir()):
         print(f"[!] Error: The '{IMAGE_DIR.name}' folder is missing or empty.")
@@ -919,7 +921,7 @@ def flash_edl(skip_reset=False, skip_reset_edl=False, skip_dp=False):
             choice = input("Are you sure you want to continue? (y/n): ").lower().strip()
 
         if choice == 'n':
-            print("[*] Operation cancelled. No changes made.")
+            print("[*] Operation cancelled.")
             return
 
     print("\n[*] Copying patched files to 'image' folder (overwriting)...")
@@ -956,6 +958,8 @@ def flash_edl(skip_reset=False, skip_reset_edl=False, skip_dp=False):
         print("[*] No 'output*' folders found. Proceeding with files already in 'image' folder.")
 
     print("\n--- [STEP 1] Flashing all images via rawprogram (fh_loader) ---")
+
+    port = device.setup_edl_connection(skip_adb=skip_adb)
 
     raw_xmls = [f for f in IMAGE_DIR.glob("rawprogram*.xml") if f.name != "rawprogram0.xml"]
     patch_xmls = list(IMAGE_DIR.glob("patch*.xml"))
@@ -999,13 +1003,7 @@ def flash_edl(skip_reset=False, skip_reset_edl=False, skip_dp=False):
         print("\n--- [STEP 3] Final step: Resetting device to system ---")
         try:
             print("[*] Attempting to reset device via fh_loader...")
-            reboot_cmd = [
-                str(FH_LOADER_EXE),
-                "--port=" + str(port),
-                "--reset",
-                "--noprompt"
-            ]
-            utils.run_command(reboot_cmd)
+            device.fh_loader_reset(port)
             print("[+] Device reset command sent.")
         except (subprocess.CalledProcessError, FileNotFoundError, Exception) as e:
              print(f"[!] Failed to reset device: {e}", file=sys.stderr)
