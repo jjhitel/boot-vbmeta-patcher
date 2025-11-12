@@ -51,6 +51,28 @@ def setup_console():
         except Exception as e:
             print(f"[!] Warning: Failed to set console title: {e}", file=sys.stderr)
 
+def check_path_encoding():
+    current_path = str(Path(__file__).parent.parent.resolve())
+    if not current_path.isascii():
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print("\n" + "!" * 65)
+        print("  CRITICAL ERROR: NON-ASCII CHARACTERS DETECTED IN PATH")
+        print("  " + "-" * 60)
+        print(f"  Current Path: {current_path}")
+        print("  " + "-" * 60)
+        print("  The underlying Qualcomm tools (fh_loader) do not support")
+        print("  paths containing Korean or other non-English characters.")
+        print("\n  [ACTION REQUIRED]")
+        print("  Please move the 'LTBox' folder to a simple English path.")
+        print("  Example: C:\\LTBox")
+        print("!" * 65 + "\n")
+        
+        if platform.system() == "Windows":
+            os.system("pause")
+        else:
+            input("Press Enter to exit...")
+        sys.exit(1)
+
 @contextmanager
 def capture_output_to_log(log_filename):
     """
@@ -58,11 +80,9 @@ def capture_output_to_log(log_filename):
     """
     logger = logging.getLogger("task_logger")
     logger.setLevel(logging.INFO)
-    logger.handlers = []  # Clear any existing handlers
+    logger.handlers = [] 
 
-    # File Handler setup
     file_handler = logging.FileHandler(log_filename, encoding='utf-8')
-    # Use a raw formatter to mimic print output exactly
     file_handler.setFormatter(logging.Formatter('%(message)s'))
     logger.addHandler(file_handler)
 
@@ -73,8 +93,6 @@ def capture_output_to_log(log_filename):
 
         def write(self, message):
             self.original_stream.write(message)
-            # Only log non-empty messages to avoid excessive blank lines in log
-            # logging.info adds a newline, so we strip the message's trailing newline
             if message.strip():
                 logger.info(message.rstrip())
 
@@ -98,14 +116,12 @@ def capture_output_to_log(log_filename):
 def run_task(command, title, skip_adb=False):
     os.environ['SKIP_ADB'] = '1' if skip_adb else '0'
     
-    # Clear screen
     os.system('cls' if os.name == 'nt' else 'clear')
     
     print("  " + "=" * 58)
     print(f"    Starting Task: [{title}]...")
     print("  " + "=" * 58, "\n")
 
-    # Determine if logging is needed for this command
     needs_logging = command in ["patch_all", "patch_all_wipe"]
     log_context = None
     log_file = None
@@ -117,9 +133,7 @@ def run_task(command, title, skip_adb=False):
         print(f"--- Command: {command} ---")
         log_context = capture_output_to_log(log_file)
     else:
-        # No-op context manager if logging is not required
-        log_context = utils.temporary_workspace(Path(".")) # Dummy context, practically ignores path
-        # To avoid side effects of temporary_workspace, let's just use a nullcontext-like generator
+        log_context = utils.temporary_workspace(Path(".")) 
         @contextmanager
         def no_op(): yield
         log_context = no_op()
@@ -188,7 +202,6 @@ def run_info_scan(paths):
 
     print(f"[*] Found {len(files_to_scan)} image(s) to scan.")
     
-    # Configure logging for scan
     logger = logging.getLogger("scan_logger")
     logger.setLevel(logging.INFO)
     fh = logging.FileHandler(log_filename, encoding='utf-8')
@@ -320,6 +333,7 @@ def main():
 
 if __name__ == "__main__":
     setup_console()
+    check_path_encoding()
     
     if len(sys.argv) > 1 and sys.argv[1].lower() == 'info':
         if len(sys.argv) > 2:
