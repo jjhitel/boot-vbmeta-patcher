@@ -1,8 +1,10 @@
 import argparse
+import logging
 import os
 import platform
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime
 
@@ -41,25 +43,6 @@ COMMAND_MAP = {
     "patch_all_wipe": (workflow.patch_all, {"wipe": 1, "skip_adb": True}),
 }
 
-class Tee:
-    def __init__(self, original_stream, log_file):
-        self.original_stream = original_stream
-        self.log_file = log_file
-
-    def write(self, message):
-        try:
-            self.original_stream.write(message)
-            self.log_file.write(message)
-        except Exception as e:
-            self.original_stream.write(f"\n[!] Logging Error: {e}\n")
-
-    def flush(self):
-        try:
-            self.original_stream.flush()
-            self.log_file.flush()
-        except Exception:
-            pass
-
 def setup_console():
     system = platform.system()
     if system == "Windows":
@@ -68,68 +51,104 @@ def setup_console():
         except Exception as e:
             print(f"[!] Warning: Failed to set console title: {e}", file=sys.stderr)
 
-def run_task(command, title, skip_adb=False):
-    log_file_handle = None
+@contextmanager
+def capture_output_to_log(log_filename):
+    """
+    Redirects stdout and stderr to a standard logger file handler while maintaining console output.
+    """
+    logger = logging.getLogger("task_logger")
+    logger.setLevel(logging.INFO)
+    logger.handlers = []  # Clear any existing handlers
+
+    # File Handler setup
+    file_handler = logging.FileHandler(log_filename, encoding='utf-8')
+    # Use a raw formatter to mimic print output exactly
+    file_handler.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(file_handler)
+
+    class StreamLogger:
+        """Redirects stream writes to both the original stream and the logger."""
+        def __init__(self, original_stream):
+            self.original_stream = original_stream
+
+        def write(self, message):
+            self.original_stream.write(message)
+            # Only log non-empty messages to avoid excessive blank lines in log
+            # logging.info adds a newline, so we strip the message's trailing newline
+            if message.strip():
+                logger.info(message.rstrip())
+
+        def flush(self):
+            self.original_stream.flush()
+            file_handler.flush()
+
     original_stdout = sys.stdout
     original_stderr = sys.stderr
 
-    if command in ["patch_all", "patch_all_wipe"]:
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_filename = f"log_{timestamp}.txt"
-            
-            log_file_handle = open(log_filename, 'w', encoding='utf-8')
-            
-            sys.stdout = Tee(original_stdout, log_file_handle)
-            sys.stderr = Tee(original_stderr, log_file_handle)
-            
-            print(f"--- Logging enabled. Output will be saved to {log_filename} ---")
-            print(f"--- Command: {command} ---")
-        except Exception as e:
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-            if log_file_handle:
-                log_file_handle.close()
-            print(f"[!] Failed to initialize logger: {e}", file=sys.stderr)
-            log_file_handle = None
-    
-    os.environ['SKIP_ADB'] = '1' if skip_adb else '0'
+    try:
+        sys.stdout = StreamLogger(original_stdout)
+        sys.stderr = StreamLogger(original_stderr)
+        yield
+    finally:
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        logger.removeHandler(file_handler)
+        file_handler.close()
 
+def run_task(command, title, skip_adb=False):
+    os.environ['SKIP_ADB'] = '1' if skip_adb else '0'
+    
+    # Clear screen
     os.system('cls' if os.name == 'nt' else 'clear')
+    
     print("  " + "=" * 58)
     print(f"    Starting Task: [{title}]...")
     print("  " + "=" * 58, "\n")
 
+    # Determine if logging is needed for this command
+    needs_logging = command in ["patch_all", "patch_all_wipe"]
+    log_context = None
+    log_file = None
+
+    if needs_logging:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = f"log_{timestamp}.txt"
+        print(f"--- Logging enabled. Output will be saved to {log_file} ---")
+        print(f"--- Command: {command} ---")
+        log_context = capture_output_to_log(log_file)
+    else:
+        # No-op context manager if logging is not required
+        log_context = utils.temporary_workspace(Path(".")) # Dummy context, practically ignores path
+        # To avoid side effects of temporary_workspace, let's just use a nullcontext-like generator
+        @contextmanager
+        def no_op(): yield
+        log_context = no_op()
+
     try:
-        func_tuple = COMMAND_MAP.get(command)
-        if not func_tuple:
-            print(f"[!] Unknown command: {command}", file=sys.stderr)
-            return
-        
-        func, base_kwargs = func_tuple
-        
-        final_kwargs = base_kwargs.copy()
-        if "skip_adb" in final_kwargs:
-            final_kwargs["skip_adb"] = skip_adb
+        with log_context:
+            func_tuple = COMMAND_MAP.get(command)
+            if not func_tuple:
+                print(f"[!] Unknown command: {command}", file=sys.stderr)
+                return
             
-        func(**final_kwargs)
+            func, base_kwargs = func_tuple
+            final_kwargs = base_kwargs.copy()
+            if "skip_adb" in final_kwargs:
+                final_kwargs["skip_adb"] = skip_adb
             
+            func(**final_kwargs)
+
     except (subprocess.CalledProcessError, FileNotFoundError, RuntimeError, KeyError) as e:
         if not isinstance(e, SystemExit):
             print(f"\nAn unexpected error occurred: {e}", file=sys.stderr)
     except SystemExit:
-        print("\nProcess halted by script (e.g., file not found).", file=sys.stderr)
+        print("\nProcess halted by script.", file=sys.stderr)
     except KeyboardInterrupt:
         print("\nProcess cancelled by user.", file=sys.stderr)
-
     finally:
         print()
-        
-        if log_file_handle:
-            print(f"--- Logging finished. Output saved to {log_file_handle.name} ---")
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-            log_file_handle.close()
+        if needs_logging and log_file:
+            print(f"--- Logging finished. Output saved to {log_file} ---")
 
         print("  " + "=" * 58)
         print(f"  Task [{title}] has completed.")
@@ -169,69 +188,96 @@ def run_info_scan(paths):
 
     print(f"[*] Found {len(files_to_scan)} image(s) to scan.")
     
-    with open(log_filename, 'w', encoding='utf-8') as log_file:
+    # Configure logging for scan
+    logger = logging.getLogger("scan_logger")
+    logger.setLevel(logging.INFO)
+    fh = logging.FileHandler(log_filename, encoding='utf-8')
+    fh.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(fh)
+
+    try:
         for f in files_to_scan:
             cmd = [str(PYTHON_EXE), str(AVBTOOL_PY), "info_image", "--image", str(f)]
-            log_file.write(f"--- Info for: {f.resolve()} ---\n\n")
+            header = f"--- Info for: {f.resolve()} ---\n"
+            logger.info(header)
             print(f"[*] Scanning: {f.name}...")
+            
             try:
                 result = utils.run_command(cmd, capture=True, check=False)
-                log_file.write(result.stdout)
-                log_file.write(result.stderr)
-                log_file.write("\n" + "="*70 + "\n\n")
+                logger.info(result.stdout)
+                logger.info(result.stderr)
+                logger.info("\n" + "="*70 + "\n")
             except Exception as e:
                 error_msg = f"[!] Failed to scan {f.name}: {e}\n"
                 print(error_msg, file=sys.stderr)
-                log_file.write(error_msg)
+                logger.info(error_msg)
+    finally:
+        logger.removeHandler(fh)
+        fh.close()
     
     print(f"\n--- Process Complete ---")
     print(f"[*] Info saved to: {log_filename.name}")
 
+def print_main_menu(skip_adb):
+    skip_adb_state = "ON" if skip_adb else "OFF"
+    os.system('cls' if os.name == 'nt' else 'clear')
+    print("\n  " + "=" * 58)
+    print("     LTBox - Main")
+    print("  " + "=" * 58 + "\n")
+    print(f"     1. Install ROW firmware to PRC device (WIPE DATA)")
+    print(f"     2. Update ROW firmware on PRC device (NO WIPE)")
+    print(f"     3. Disable OTA")
+    print(f"     4. Root device")
+    print(f"     5. Unroot device")
+    print(f"     6. Skip ADB [{skip_adb_state}]")
+    print("\n     a. Advanced")
+    print("     x. Exit")
+    print("\n  " + "=" * 58 + "\n")
+
+def print_advanced_menu():
+    os.system('cls' if os.name == 'nt' else 'clear')
+    print("\n  " + "=" * 58)
+    print("     LTBox - Advanced")
+    print("  " + "=" * 58 + "\n")
+    print("     1. Convert PRC to ROW in ROM")
+    print("     2. Dump devinfo/persist from device")
+    print("     3. Patch devinfo/persist to change region code")
+    print("     4. Write devinfo/persist to device")
+    print("     5. Detect Anti-Rollback from device")
+    print("     6. Patch rollback indices in ROM")
+    print("     7. Write Anti-Anti-Rollback to device")
+    print("     8. Convert x files to xml (WIPE DATA)")
+    print("     9. Convert x files to xml & Modify (NO WIPE)")
+    print("    10. Flash firmware to device")
+    print("\n    11. Clean workspace")
+    print("     m. Back to Main")
+    print("\n  " + "=" * 58 + "\n")
+
 def advanced_menu(skip_adb):
     while True:
-        os.system('cls' if os.name == 'nt' else 'clear')
-        print("\n  " + "=" * 58)
-        print("     LTBox - Advanced")
-        print("  " + "=" * 58 + "\n")
-        print("     1. Convert PRC to ROW in ROM")
-        print("     2. Dump devinfo/persist from device")
-        print("     3. Patch devinfo/persist to change region code")
-        print("     4. Write devinfo/persist to device")
-        print("     5. Detect Anti-Rollback from device")
-        print("     6. Patch rollback indices in ROM")
-        print("     7. Write Anti-Anti-Rollback to device")
-        print("     8. Convert x files to xml (WIPE DATA)")
-        print("     9. Convert x files to xml & Modify (NO WIPE)")
-        print("    10. Flash firmware to device")
-        print("\n    11. Clean workspace")
-        print("     m. Back to Main")
-        print("\n  " + "=" * 58 + "\n")
-        
+        print_advanced_menu()
         choice = input("    Enter your choice (1-11, m): ").strip().lower()
 
-        if choice == "1":
-            run_task("convert", "Convert PRC to ROW in ROM", skip_adb)
-        elif choice == "2":
-            run_task("read_edl", "Dump devinfo/persist from device", skip_adb)
-        elif choice == "3":
-            run_task("edit_dp", "Patch devinfo/persist to change region code", skip_adb)
-        elif choice == "4":
-            run_task("write_edl", "Write devinfo/persist to device", skip_adb)
-        elif choice == "5":
-            run_task("read_anti_rollback", "Detect Anti-Rollback from device", skip_adb)
-        elif choice == "6":
-            run_task("patch_anti_rollback", "Patch rollback indices in ROM", skip_adb)
-        elif choice == "7":
-            run_task("write_anti_rollback", "Write Anti-Anti-Rollback to device", skip_adb)
-        elif choice == "8":
-            run_task("modify_xml_wipe", "Convert x files to xml (WIPE DATA)", skip_adb)
-        elif choice == "9":
-            run_task("modify_xml", "Convert & Modify x files to xml (NO WIPE)", skip_adb)
-        elif choice == "10":
-            run_task("flash_edl", "Flash firmware to device", skip_adb)
-        elif choice == "11":
-            run_task("clean", "Workspace Cleanup", skip_adb)
-            sys.exit()
+        actions_map = {
+            "1": ("convert", "Convert PRC to ROW in ROM"),
+            "2": ("read_edl", "Dump devinfo/persist from device"),
+            "3": ("edit_dp", "Patch devinfo/persist to change region code"),
+            "4": ("write_edl", "Write devinfo/persist to device"),
+            "5": ("read_anti_rollback", "Detect Anti-Rollback from device"),
+            "6": ("patch_anti_rollback", "Patch rollback indices in ROM"),
+            "7": ("write_anti_rollback", "Write Anti-Anti-Rollback to device"),
+            "8": ("modify_xml_wipe", "Convert x files to xml (WIPE DATA)"),
+            "9": ("modify_xml", "Convert & Modify x files to xml (NO WIPE)"),
+            "10": ("flash_edl", "Flash firmware to device"),
+            "11": ("clean", "Workspace Cleanup")
+        }
+
+        if choice in actions_map:
+            cmd, title = actions_map[choice]
+            if choice == "11":
+                run_task(cmd, title, skip_adb)
+                sys.exit()
+            run_task(cmd, title, skip_adb)
         elif choice == "m":
             return
         else:
@@ -241,38 +287,24 @@ def advanced_menu(skip_adb):
             else:
                 input("Press Enter to continue...")
 
-
 def main():
     skip_adb = False
     
     while True:
-        skip_adb_state = "ON" if skip_adb else "OFF"
-        os.system('cls' if os.name == 'nt' else 'clear')
-        print("\n  " + "=" * 58)
-        print("     LTBox - Main")
-        print("  " + "=" * 58 + "\n")
-        print(f"     1. Install ROW firmware to PRC device (WIPE DATA)")
-        print(f"     2. Update ROW firmware on PRC device (NO WIPE)")
-        print(f"     3. Disable OTA")
-        print(f"     4. Root device")
-        print(f"     5. Unroot device")
-        print(f"     6. Skip ADB [{skip_adb_state}]")
-        print("\n     a. Advanced")
-        print("     x. Exit")
-        print("\n  " + "=" * 58 + "\n")
-        
+        print_main_menu(skip_adb)
         choice = input("    Enter your choice: ").strip().lower()
 
-        if choice == "1":
-            run_task("patch_all_wipe", "Install ROW firmware (WIPE DATA)", skip_adb)
-        elif choice == "2":
-            run_task("patch_all", "Update ROW firmware (NO WIPE)", skip_adb)
-        elif choice == "3":
-            run_task("disable_ota", "Disable OTA", skip_adb)
-        elif choice == "4":
-            run_task("root_device", "Root device", skip_adb)
-        elif choice == "5":
-            run_task("unroot_device", "Unroot device", skip_adb)
+        actions_map = {
+            "1": ("patch_all_wipe", "Install ROW firmware (WIPE DATA)"),
+            "2": ("patch_all", "Update ROW firmware (NO WIPE)"),
+            "3": ("disable_ota", "Disable OTA"),
+            "4": ("root_device", "Root device"),
+            "5": ("unroot_device", "Unroot device"),
+        }
+
+        if choice in actions_map:
+            cmd, title = actions_map[choice]
+            run_task(cmd, title, skip_adb)
         elif choice == "6":
             skip_adb = not skip_adb
         elif choice == "a":
