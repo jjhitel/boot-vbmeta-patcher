@@ -485,13 +485,6 @@ def edit_devinfo_persist(lang: Optional[Dict[str, str]] = None) -> None:
         replacement_code = select_country_code(lang.get("act_select_new_code", "SELECT NEW REGION CODE"), lang=lang)
         imgpatch.patch_region_codes(replacement_code, target_map, lang=lang)
 
-        if replacement_code == "00":
-            print("\n" + "=" * 61)
-            print(lang.get("act_note", "  NOTE:"))
-            print(lang.get("act_note_5993_1", "  After booting, please enter ####5993# in the Settings app"))
-            print(lang.get("act_note_5993_2", "  search bar to select your country code."))
-            print("=" * 61)
-
         modified_devinfo = BASE_DIR / "devinfo_modified.img"
         modified_persist = BASE_DIR / "persist_modified.img"
         

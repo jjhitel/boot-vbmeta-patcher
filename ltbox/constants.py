@@ -71,7 +71,6 @@ KEY_MAP = {
 
 # --- Country Codes for devinfo/persist patching ---
 COUNTRY_CODES = {
-    "00": "NULL",
     "AE": "United Arab Emirates", "AM": "Armenia", "AR": "Argentina", "AT": "Austria", "AU": "Australia",
     "AZ": "Azerbaijan", "BE": "Belgium", "BG": "Bulgaria", "BH": "Bahrain", "BR": "Brazil",
     "CA": "Canada", "CH": "Switzerland", "CL": "Chile", "CN": "China", "CO": "Colombia", "CR": "Costa Rica",
