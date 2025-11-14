@@ -54,7 +54,8 @@ def get_partition_params(target_label: str, xml_paths: List[Path]) -> Optional[D
                         'start_sector': prog.get('start_sector'),
                         'num_sectors': prog.get('num_partition_sectors'),
                         'filename': prog.get('filename', ''),
-                        'source_xml': xml_path.name
+                        'source_xml': xml_path.name,
+                        'size_in_kb': prog.get('size_in_KB')
                     }
         except Exception as e:
             print(get_string("act_xml_parse_err").format(name=xml_path.name, e=e))

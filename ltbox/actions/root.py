@@ -152,6 +152,21 @@ def root_device(dev: device.DeviceController) -> None:
                 start_sector=params['start_sector'],
                 num_sectors=params['num_sectors']
             )
+            
+            if params.get('size_in_kb'):
+                try:
+                    expected_size_bytes = int(float(params['size_in_kb']) * 1024)
+                    actual_size_bytes = dumped_boot_img.stat().st_size
+                    
+                    if expected_size_bytes != actual_size_bytes:
+                        raise RuntimeError(
+                            f"Dumped file size mismatch for '{target_partition}'. "
+                            f"Expected: {expected_size_bytes}B, Got: {actual_size_bytes}B"
+                        )
+                except (ValueError, OSError) as e:
+                    print(get_string("act_err_dump").format(part=target_partition, e=f"Size validation error: {e}"), file=sys.stderr)
+                    raise
+
             print(get_string("act_read_boot_ok").format(part=target_partition, file=dumped_boot_img))
         except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
             print(get_string("act_err_dump").format(part=target_partition, e=e), file=sys.stderr)
