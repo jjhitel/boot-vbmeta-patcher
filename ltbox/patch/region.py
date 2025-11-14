@@ -9,40 +9,31 @@ from .. import utils
 from .. import constants as const
 from ..i18n import get_string
 
-def _patch_vendor_boot_logic(mm: Any, **kwargs: Any) -> Dict[str, Any]:
+def _patch_vendor_boot_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dict[str, Any]]:
     patterns_row = {
         const.ROW_PATTERN_DOT: const.PRC_PATTERN_DOT,
         const.ROW_PATTERN_I: const.PRC_PATTERN_I
     }
     patterns_prc = [const.PRC_PATTERN_DOT, const.PRC_PATTERN_I]
     
+    modified_content = content
     found_row_count = 0
 
     for target, replacement in patterns_row.items():
-        start = 0
-        while True:
-            idx = mm.find(target, start)
-            if idx == -1:
-                break
-            
-            mm[idx:idx+len(target)] = replacement
-            found_row_count += 1
-            start = idx + len(target)
+        count = content.count(target)
+        if count > 0:
+            print(get_string("img_vb_found_replace").format(pattern=target.hex().upper(), count=count))
+            modified_content = modified_content.replace(target, replacement)
+            found_row_count += count
 
     if found_row_count > 0:
-        print(get_string("img_vb_found_replace").format(pattern="ROW->PRC", count=found_row_count))
-        return {'changed': True, 'message': get_string("img_vb_replaced_total").format(count=found_row_count)}
-
-    found_prc = False
-    for target in patterns_prc:
-        if mm.find(target) != -1:
-            found_prc = True
-            break
-            
-    if found_prc:
-        return {'changed': False, 'message': get_string("img_vb_already_prc")}
+        return modified_content, {'changed': True, 'message': get_string("img_vb_replaced_total").format(count=found_row_count)}
     
-    return {'changed': False, 'message': get_string("img_vb_no_patterns")}
+    found_prc = any(content.count(target) > 0 for target in patterns_prc)
+    if found_prc:
+        return content, {'changed': False, 'message': get_string("img_vb_already_prc")}
+    
+    return content, {'changed': False, 'message': get_string("img_vb_no_patterns")}
 
 def edit_vendor_boot(input_file_path: str) -> None:
     input_file = Path(input_file_path)
@@ -78,12 +69,12 @@ def detect_region_codes() -> Dict[str, Optional[str]]:
             
     return results
 
-def _patch_region_code_logic(mm: Any, **kwargs: Any) -> Dict[str, Any]:
+def _patch_region_code_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dict[str, Any]]:
     current_code = kwargs.get('current_code')
     replacement_code = kwargs.get('replacement_code')
     
     if not current_code or not replacement_code:
-        return {'changed': False, 'message': get_string("img_code_invalid")}
+        return content, {'changed': False, 'message': get_string("img_code_invalid")}
 
     target_string = f"000000{current_code.upper()}XX000000"
     target_bytes = b'\x00\x00\x00' + f"{current_code.upper()}".encode('ascii') + b'XX\x00\x00\x00'
@@ -92,23 +83,15 @@ def _patch_region_code_logic(mm: Any, **kwargs: Any) -> Dict[str, Any]:
     replacement_bytes = b'\x00\x00\x00' + f"{replacement_code.upper()}".encode('ascii') + b'XX\x00\x00\x00'
 
     if target_bytes == replacement_bytes:
-        return {'changed': False, 'message': get_string("img_code_already").format(code=replacement_code.upper())}
+        return content, {'changed': False, 'message': get_string("img_code_already").format(code=replacement_code.upper())}
 
-    count = 0
-    start = 0
-    while True:
-        idx = mm.find(target_bytes, start)
-        if idx == -1:
-            break
-        mm[idx:idx+len(target_bytes)] = replacement_bytes
-        count += 1
-        start = idx + len(target_bytes)
-
+    count = content.count(target_bytes)
     if count > 0:
         print(get_string("img_code_replace").format(target=target_string, count=count, replacement=replacement_string))
-        return {'changed': True, 'message': get_string("img_code_replaced_total").format(count=count), 'count': count}
+        modified_content = content.replace(target_bytes, replacement_bytes)
+        return modified_content, {'changed': True, 'message': get_string("img_code_replaced_total").format(count=count), 'count': count}
     
-    return {'changed': False, 'message': get_string("img_code_not_found").format(target=target_string)}
+    return content, {'changed': False, 'message': get_string("img_code_not_found").format(target=target_string)}
 
 def patch_region_codes(replacement_code: str, target_map: Dict[str, Optional[str]]) -> int:
     if not replacement_code or len(replacement_code) != 2:
@@ -150,7 +133,7 @@ def patch_region_codes(replacement_code: str, target_map: Dict[str, Optional[str
         )
         
         if success:
-             total_patched += 1
+             pass
 
     print(get_string("img_patch_finish"))
     return total_patched

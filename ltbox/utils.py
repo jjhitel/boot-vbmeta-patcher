@@ -3,7 +3,6 @@ import platform
 import subprocess
 import sys
 import shutil
-import mmap
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -220,47 +219,23 @@ def _process_binary_file(
         return False
 
     try:
-        if input_path != output_path:
-            shutil.copy(input_path, output_path)
+        content = input_path.read_bytes()
+        modified_content, stats = patch_func(content, **kwargs)
 
-        changed = False
-        stats = {}
-
-        with open(output_path, "r+b") as f:
-            if f.seek(0, 2) == 0:
-                pass
-            else:
-                f.seek(0)
-                with mmap.mmap(f.fileno(), 0) as mm:
-                    stats = patch_func(mm, **kwargs)
-                    changed = stats.get('changed', False)
-                    if changed:
-                        mm.flush()
-
-        if changed:
+        if stats.get('changed', False):
+            output_path.write_bytes(modified_content)
             print(get_string("img_proc_success").format(msg=stats.get('message', 'Modifications applied.')))
             print(get_string("img_proc_saved").format(name=output_path.name))
             return True
         else:
             print(get_string("img_proc_no_change").format(name=input_path.name, msg=stats.get('message', 'No patterns found')))
-            
             if copy_if_unchanged:
+                print(get_string("img_proc_copying").format(name=output_path.name))
                 if input_path != output_path:
-                    print(get_string("img_proc_copying").format(name=output_path.name))
+                    shutil.copy(input_path, output_path)
                 return True
-            else:
-                if input_path != output_path:
-                    try:
-                        output_path.unlink()
-                    except OSError:
-                        pass
-                return False
+            return False
 
     except Exception as e:
         print(get_string("img_proc_error").format(name=input_path.name, e=e), file=sys.stderr)
-        if input_path != output_path and output_path.exists():
-            try:
-                output_path.unlink()
-            except OSError:
-                pass
         return False
