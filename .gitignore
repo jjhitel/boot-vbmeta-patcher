@@ -7,6 +7,8 @@ get-pip.py
 image/
 input*/
 ltbox/__pycache__/
+ltbox/actions/__pycache__/
+ltbox/patch/__pycache__/
 output*/
 python3/
 tools/dl/
