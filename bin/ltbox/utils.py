@@ -48,6 +48,12 @@ def get_platform_executable(name: str) -> Path:
         raise RuntimeError(get_string("err_unsupported_os").format(system=system))
     return const.DOWNLOAD_DIR / exe_name
 
+def clear_screen() -> None:
+    if platform.system() == "Windows":
+        os.system('cls')
+    else:
+        os.system('clear')
+
 def _wait_for_resource(
     target_path: Path, 
     check_func: Callable[[Path, Optional[List[str]]], bool], 
@@ -59,10 +65,7 @@ def _wait_for_resource(
         if check_func(target_path, item_list):
             return True
         
-        if platform.system() == "Windows":
-            os.system('cls')
-        else:
-            os.system('clear')
+        clear_screen()
             
         print(get_string('utils_wait_resource'))
         print(prompt_msg)
@@ -100,11 +103,13 @@ def check_dependencies() -> None:
         "Python Environment": const.PYTHON_EXE,
         "ADB": const.ADB_EXE,
         "Fastboot": const.FASTBOOT_EXE,
-        "RSA4096 Key": const.KEY_MAP["2597c218aae470a130f61162feaae70afd97f011"],
-        "RSA2048 Key": const.KEY_MAP["cdbb77177f731920bbe0a0f94f84d9038ae0617d"],
         "avbtool": const.AVBTOOL_PY,
         "fetch tool": get_platform_executable("fetch")
     }
+    
+    for path in const.KEY_MAP.values():
+        dependencies[path.name] = path
+
     missing_deps = [name for name, path in dependencies.items() if not Path(path).exists()]
 
     if missing_deps:
