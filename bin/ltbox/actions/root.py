@@ -272,14 +272,15 @@ def root_device(dev: device.DeviceController, gki: bool = False) -> None:
     active_slot = detect_active_slot_robust(dev)
 
     target_partition = ""
+    target_vbmeta_partition = ""
     if active_slot:
         print(get_string("act_slot_confirmed").format(slot=active_slot))
         target_partition = f"boot{active_slot}" if gki else f"init_boot{active_slot}"
+        target_vbmeta_partition = f"vbmeta{active_slot}"
     else:
         print(get_string("act_warn_root_slot"))
         target_partition = "boot" if gki else "init_boot"
-    
-    target_vbmeta_partition = "vbmeta"
+        target_vbmeta_partition = "vbmeta"
 
     if not dev.skip_adb and gki:
         print(get_string("act_check_ksu"))
@@ -464,8 +465,9 @@ def root_device(dev: device.DeviceController, gki: bool = False) -> None:
 
     if not params:
          params = ensure_params_or_fail(target_partition)
-    if not gki and not params_vbmeta:
-        params_vbmeta = ensure_params_or_fail(target_vbmeta_partition)
+    if not gki:
+        if not params_vbmeta:
+             params_vbmeta = ensure_params_or_fail(target_vbmeta_partition)
 
     try:
         dev.fh_loader_write_part(
