@@ -31,7 +31,8 @@ class DeviceController:
         
         try:
             utils.run_command([str(const.ADB_EXE), "wait-for-device"])
-            print(get_string("device_adb_connected"))
+            if not self.adb_connected_once:
+                print(get_string("device_adb_connected"))
             self.adb_connected_once = True
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             raise ToolError(get_string("device_err_wait_adb").format(e=e))
