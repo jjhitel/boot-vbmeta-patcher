@@ -337,7 +337,6 @@
   "act_xml_scan_x": "[*] XML 파일 없음. .x 파일 확인 중...",
   "action_required": "  [조치 필요]",
   "action_required_details": "  'LTBox'를 ASCII 문자(영문/숫자)만 있는 경로로 이동하세요.",
-  "app_title": "LTBox",
   "critical_err_base_tools": "[!] 치명적인 오류: 기본 도구 설치 실패: {e}",
   "critical_error_path_encoding": "  치명적인 오류: 경로에 ASCII가 아닌 문자가 포함되어 있습니다",
   "current_path": "  현재 경로: {current_path}",

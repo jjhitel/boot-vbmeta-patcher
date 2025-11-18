@@ -337,7 +337,6 @@
   "act_xml_scan_x": "[*] No XML files. Checking for .x files...",
   "action_required": "  [ACTION REQUIRED]",
   "action_required_details": "  Move 'LTBox' to a path with only ASCII characters.",
-  "app_title": "LTBox",
   "critical_err_base_tools": "[!] Critical Error: Failed to install base tools: {e}",
   "critical_error_path_encoding": "  CRITICAL ERROR: NON-ASCII CHARACTERS DETECTED IN PATH",
   "current_path": "  Current Path: {current_path}",

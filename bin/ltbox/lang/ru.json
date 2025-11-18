@@ -330,7 +330,6 @@
   "act_xml_scan_x": "[*] XML файлы отсутствуют. Поиск .x файлов...",
   "action_required": "  [ТРЕБУЕТСЯ ДЕЙСТВИЕ]",
   "action_required_details": "  Поместите 'LTBox' по пути, содержащий только символы ASCII.",
-  "app_title": "LTBox",
   "critical_err_base_tools": "[!] Ошибка: Не удалось установить базовые инструменты: {e}",
   "critical_error_path_encoding": "  КРИТИЧЕСКАЯ ОШИБКА: В ПУТИ ОБНАРУЖЕНЫ СИМВОЛЫ, НЕ ОТНОСЯЩИЕСЯ К ASCII",
   "current_path": "  Текущий путь: {current_path}",
