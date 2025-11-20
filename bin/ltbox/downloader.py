@@ -376,8 +376,7 @@ def install_base_tools(lang_code: str = "en"):
     except Exception as e:
         msg = get_string("dl_base_error").format(error=e)
         print(msg, file=sys.stderr)
-        if platform.system() == "Windows":
-            os.system("pause")
+        input(get_string("press_enter_to_exit"))
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -20,8 +20,7 @@ try:
 except ImportError:
     print(f"[!] Critical Import Error: Failed to import 'ltbox.errors'.", file=sys.stderr)
     print(f"[!] Please ensure 'ltbox/errors.py' file exists.", file=sys.stderr)
-    if platform.system() == "Windows":
-        os.system("pause")
+    input(get_string("press_enter_to_exit"))
     sys.exit(1)
 
 def _check_platform():
@@ -29,7 +28,7 @@ def _check_platform():
         print("[!] Fatal Error: This tool is designed to run only on Windows.", file=sys.stderr)
         print(f"    Current platform detected: {platform.system()}", file=sys.stderr)
         print("[!] Aborting.", file=sys.stderr)
-        os.system("pause")
+        input(get_string("press_enter_to_exit"))
         sys.exit(1)
     
     if platform.machine() != "AMD64":
@@ -37,7 +36,7 @@ def _check_platform():
         print(f"    Current architecture detected: {platform.machine()}", file=sys.stderr)
         print("[!] 32-bit (I386) or ARM64 builds are not supported.", file=sys.stderr)
         print("[!] Aborting.", file=sys.stderr)
-        os.system("pause")
+        input(get_string("press_enter_to_exit"))
         sys.exit(1)
 
 def setup_console():
@@ -64,7 +63,7 @@ def check_path_encoding():
             get_string("example_path")
         ], err=True)
         
-        os.system("pause")
+        input(get_string("press_enter_to_continue"))
         raise RuntimeError(get_string("critical_error_path_encoding"))
 
 def run_task(command, title, dev, command_map):
@@ -143,11 +142,9 @@ def run_task(command, title, dev, command_map):
         ui.echo("  " + "=" * 58 + "\n")
         
         if command == "clean":
-            ui.echo(get_string("press_any_key_to_exit"))
+            input(get_string("press_enter_to_exit"))
         else:
-            ui.echo(get_string("press_any_key_to_return"))
-
-        os.system(f"pause > nul & echo {get_string('press_any_key')}")
+            input(get_string("press_enter_to_continue"))
 
 def run_info_scan(paths, constants, avb_patch):
     print(get_string("scan_start"))
@@ -268,7 +265,7 @@ def advanced_menu(dev, command_map):
             sys.exit()
         else:
             print(get_string("menu_adv_invalid"))
-            os.system(f"pause > nul & echo {get_string('press_any_key')}...")
+            input(get_string("press_enter_to_continue"))
 
 def print_root_mode_selection_menu():
     os.system('cls')
@@ -296,7 +293,7 @@ def root_mode_selection_menu(dev, command_map):
             sys.exit()
         else:
             print(get_string("menu_root_mode_invalid"))
-            os.system(f"pause > nul & echo {get_string('press_any_key')}...")
+            input(get_string("press_enter_to_continue"))
 
 def print_root_menu(gki: bool):
     os.system('cls')
@@ -338,7 +335,7 @@ def root_menu(dev, command_map, gki: bool):
             sys.exit()
         else:
             print(get_string("menu_root_invalid"))
-            os.system(f"pause > nul & echo {get_string('press_any_key')}...")
+            input(get_string("press_enter_to_continue"))
 
 def main_loop(device_controller_class, command_map):
     skip_adb = False
@@ -369,7 +366,7 @@ def main_loop(device_controller_class, command_map):
             break
         else:
             print(get_string("menu_main_invalid"))
-            os.system(f"pause > nul & echo {get_string('press_any_key')}...")
+            input(get_string("press_enter_to_continue"))
 
 def prompt_for_language() -> str:
     i18n.load_lang("en")
@@ -386,7 +383,7 @@ def prompt_for_language() -> str:
         else:
             print(get_string("err_lang_generic").format(e=e), file=sys.stderr)
         
-        os.system("pause")
+        input(get_string("press_enter_to_continue"))
         raise e
 
     menu_options = []
@@ -433,7 +430,7 @@ def entry_point():
         except (subprocess.CalledProcessError, FileNotFoundError, ToolError) as e:
             ui.error(get_string("critical_err_base_tools").format(e=e))
             ui.error(get_string("err_run_install_manually"))
-            os.system("pause")
+            input(get_string("press_enter_to_exit"))
             sys.exit(1)
 
         try:
@@ -472,7 +469,7 @@ def entry_point():
             ui.error(get_string("err_import_ltbox"))
             ui.error(get_string("err_details").format(e=e))
             ui.error(get_string("err_ensure_ltbox_present"))
-            os.system("pause")
+            input(get_string("press_enter_to_exit"))
             sys.exit(1)
 
         check_path_encoding()
@@ -484,14 +481,14 @@ def entry_point():
                 ui.error(get_string("info_no_files_dragged"))
                 ui.error(get_string("info_drag_files_prompt"))
             
-            os.system("pause")
+            input(get_string("press_enter_to_exit"))
         else:
             main_loop(device_controller_class, COMMAND_MAP)
 
     except (RuntimeError, ToolError) as e:
         ui.error(get_string("err_fatal_abort"))
         ui.error(get_string("err_fatal_details").format(e=e))
-        os.system("pause")
+        input(get_string("press_enter_to_exit"))
         sys.exit(1)
     except KeyboardInterrupt:
         ui.error(get_string("err_fatal_user_cancel"))
