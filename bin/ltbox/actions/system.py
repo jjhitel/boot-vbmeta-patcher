@@ -52,7 +52,18 @@ def disable_ota(dev: device.DeviceController) -> str:
     ]
     
     try:
-        result = utils.run_command(command, capture=True)
+        clear_cmd = [
+            str(const.ADB_EXE),
+            "shell", "pm", "clear", "--user", "0", "com.lenovo.ota"
+        ]
+        utils.run_command(clear_cmd, capture=True)
+
+        disable_cmd = [
+            str(const.ADB_EXE),
+            "shell", "pm", "disable-user", "--user", "0", "com.lenovo.ota"
+        ]
+        result = utils.run_command(disable_cmd, capture=True)
+
         if "disabled" in result.stdout.lower() or "already disabled" in result.stdout.lower():
             success_msg = get_string("act_ota_disabled")
             success_msg += f"\n{result.stdout.strip()}"
