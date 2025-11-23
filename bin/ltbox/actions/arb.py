@@ -117,10 +117,10 @@ def patch_anti_rollback(comparison_result: Tuple[str, int, int]) -> None:
             patched_image_path=(const.OUTPUT_ANTI_ROLLBACK_DIR / const.FN_VBMETA_SYSTEM)
         )
 
-        utils.ui.echo("\n" + "=" * 61)
+        utils.ui.echo("\n  " + "=" * 58)
         utils.ui.echo(get_string("act_success"))
         utils.ui.echo(get_string("act_arb_patched_ready").format(dir=const.OUTPUT_ANTI_ROLLBACK_DIR.name))
-        utils.ui.echo("=" * 61)
+        utils.ui.echo("  " + "=" * 58)
 
     except Exception as e:
         utils.ui.error(get_string("act_err_arb_patch").format(e=e))

@@ -58,10 +58,10 @@ def decrypt_x_files() -> None:
         shutil.rmtree(const.OUTPUT_XML_DIR)
         raise FileNotFoundError(get_string("img_xml_no_files").format(dir=const.IMAGE_DIR.name))
     
-    print("\n" + "=" * 61)
+    print("\n  " + "=" * 58)
     print(get_string("act_success"))
     print(get_string("act_xml_ready").format(dir=const.OUTPUT_XML_DIR.name))
-    print("=" * 61)
+    print("  " + "=" * 58)
 
 def _is_garbage_file(path: Path) -> bool:
     name = path.name.lower()
@@ -276,7 +276,7 @@ def modify_xml(wipe: int = 0, skip_dp: bool = False) -> None:
         
         print(get_string("act_clean_temp").format(dir=const.WORKING_DIR.name))
     
-    print("\n" + "=" * 61)
+    print("\n  " + "=" * 58)
     print(get_string("act_success"))
     print(get_string("act_xml_ready").format(dir=const.OUTPUT_XML_DIR.name))
-    print("=" * 61)
+    print("  " + "=" * 58)

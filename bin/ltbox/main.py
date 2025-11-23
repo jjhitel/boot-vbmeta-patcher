@@ -104,9 +104,9 @@ def run_task(command, title, dev, command_map, extra_kwargs=None):
             
             result = func(**final_kwargs)
 
-            ui.echo("\n" + "=" * 61)
+            ui.echo("\n  " + "=" * 58)
             ui.echo(get_string("act_success"))
-            ui.echo("=" * 61)
+            ui.echo("  " + "=" * 58)
 
             if isinstance(result, str) and result:
                 ui.echo(result)

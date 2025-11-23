@@ -230,14 +230,14 @@ def patch_root_image_file(gki: bool = False) -> None:
             shutil.move(bak_file, const.BACKUP_DIR / bak_file.name)
         utils.ui.echo("")
 
-        utils.ui.echo("=" * 61)
+        utils.ui.echo("  " + "=" * 58)
         utils.ui.echo(get_string("act_success"))
         utils.ui.echo(success_msg.format(dir=out_dir_name))
         if not gki:
             utils.ui.echo(get_string("act_root_saved_vbmeta_lkm").format(name=vbmeta_img_name, dir=out_dir_name))
         
         utils.ui.echo("\n" + get_string("act_root_manual_flash_notice"))
-        utils.ui.echo("=" * 61)
+        utils.ui.echo("  " + "=" * 58)
     else:
         utils.ui.error(fail_msg)
 

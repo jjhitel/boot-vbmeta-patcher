@@ -147,10 +147,10 @@ def convert_region_images(dev: device.DeviceController, device_model: Optional[s
         shutil.move(bak_file, const.BACKUP_DIR / bak_file.name)
     print()
 
-    print("=" * 61)
+    print("  " + "=" * 58)
     print(get_string("act_success"))
     print(get_string("act_final_saved").format(dir=const.OUTPUT_DIR.name))
-    print("=" * 61)
+    print("  " + "=" * 58)
 
 def select_country_code(prompt_message: str = "Please select a country from the list below:") -> str:
     print(get_string("act_prompt_msg").format(msg=prompt_message.upper()))
@@ -303,9 +303,9 @@ def edit_devinfo_persist() -> Optional[str]:
         devinfo_img.unlink(missing_ok=True)
         persist_img.unlink(missing_ok=True)
         
-        print("\n" + "=" * 61)
+        print("\n  " + "=" * 58)
         print(get_string("act_success"))
         print(get_string("act_dp_ready").format(dir=const.OUTPUT_DP_DIR.name))
-        print("=" * 61)
+        print("  " + "=" * 58)
     
     return backup_critical_dir.name
