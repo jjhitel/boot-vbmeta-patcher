@@ -10,6 +10,7 @@ from . import downloader, i18n
 from .i18n import get_string
 from .logger import logging_context
 from .utils import ui
+from .actions import edl
 
 APP_DIR = Path(__file__).parent.resolve()
 BASE_DIR = APP_DIR.parent
@@ -199,6 +200,8 @@ def run_info_scan(paths, constants, avb_patch):
 
 def print_main_menu(skip_adb):
     skip_adb_state = "ON" if skip_adb else "OFF"
+    edl_state = "ON" if edl.is_edl_mode_enabled() else "OFF"
+    
     os.system('cls')
     print("\n  " + "=" * 58)
     print(get_string("menu_main_title"))
@@ -209,6 +212,7 @@ def print_main_menu(skip_adb):
     print(get_string("menu_main_4"))
     print(get_string("menu_main_5"))
     print(get_string("menu_main_6").format(skip_adb_state=skip_adb_state))
+    print(f"     E. Use bkerler's edl ({edl_state})")
     print("\n" + get_string("menu_main_a"))
     print(get_string("menu_main_x"))
     print("\n  " + "=" * 58 + "\n")
@@ -360,6 +364,8 @@ def main_loop(device_controller_class, command_map):
         elif choice == "6":
             skip_adb = not skip_adb
             dev.skip_adb = skip_adb
+        elif choice == "e":
+            edl.toggle_edl_mode()
         elif choice == "a":
             advanced_menu(dev, command_map)
         elif choice == "x":

@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import sys
 import time
+import json
 from pathlib import Path
 from typing import Optional, List, Tuple
 
@@ -10,6 +11,47 @@ from .. import constants as const
 from .. import utils, device
 from ..partition import ensure_params_or_fail
 from ..i18n import get_string
+from ..errors import ToolError
+
+def load_config():
+    config_path = const.BASE_DIR / "bin" / "ltbox" / "config.json"
+    if config_path.exists():
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_config(config):
+    config_path = const.BASE_DIR / "bin" / "ltbox" / "config.json"
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4)
+    except Exception as e:
+        utils.ui.error(f"Failed to save config: {e}")
+
+def is_edl_mode_enabled() -> bool:
+    return load_config().get("use_bkerler_edl", False)
+
+def toggle_edl_mode():
+    config = load_config()
+    current = config.get("use_bkerler_edl", False)
+    config["use_bkerler_edl"] = not current
+    save_config(config)
+    status = "ON" if config["use_bkerler_edl"] else "OFF"
+    utils.ui.echo(f"bkerler's EDL mode is now {status}")
+
+def _run_edl_cmd(args: List[str], loader: Optional[Path] = None) -> None:
+    cmd = [str(const.PYTHON_EXE), "-m", "edlclient"] + args
+    if loader:
+        cmd.extend(["--loader", str(loader)])
+    
+    utils.ui.echo(f"Executing: {' '.join(cmd)}")
+    result = utils.run_command(cmd, capture=False)
+    
+    if result.returncode != 0:
+        raise ToolError(f"EDL command failed with return code {result.returncode}")
 
 def _prepare_edl_session(dev: device.DeviceController) -> str:
     if not const.EDL_LOADER_FILE.exists():
@@ -33,71 +75,93 @@ def _prepare_edl_session(dev: device.DeviceController) -> str:
 
 def dump_partitions(dev: device.DeviceController, skip_reset: bool = False, additional_targets: Optional[List[str]] = None, default_targets: bool = True) -> None:
     utils.ui.echo(get_string("act_start_dump"))
-    
-    port = _prepare_edl_session(dev)
-
     const.BACKUP_DIR.mkdir(exist_ok=True)
     
     targets = []
     if default_targets:
         targets.extend(["devinfo", "persist"])
-
     if additional_targets:
         targets.extend(additional_targets)
         utils.ui.echo(get_string("act_ext_dump_targets").format(targets=', '.join(targets)))
-    
-    for target in targets:
-        out_file = const.BACKUP_DIR / f"{target}.img"
-        utils.ui.echo(get_string("act_prep_dump").format(target=target))
+
+    if is_edl_mode_enabled():
+        utils.ui.echo("Using bkerler's EDL tool...")
+        if not const.EDL_LOADER_FILE.exists():
+            utils.ui.error(get_string("act_err_loader_missing").format(name=const.EDL_LOADER_FILE.name, dir=const.IMAGE_DIR.name))
+            raise FileNotFoundError("Loader not found")
         
-        try:
-            params = ensure_params_or_fail(target)
-            utils.ui.echo(get_string("act_found_dump_info").format(xml=params['source_xml'], lun=params['lun'], start=params['start_sector']))
-            
-            utils.ui.echo(get_string("device_dumping_part").format(lun=params['lun'], start=params['start_sector'], num=params['num_sectors']))
-            dev.edl_write_partition(
-                port=port,
-                output_filename=str(out_file),
-                lun=params['lun'],
-                start_sector=params['start_sector'],
-                num_sectors=params['num_sectors']
-            )
-            
-            if params.get('size_in_kb'):
-                try:
-                    expected_size_bytes = int(float(params['size_in_kb']) * 1024)
-                    actual_size_bytes = out_file.stat().st_size
-                    
-                    if expected_size_bytes != actual_size_bytes:
-                        raise RuntimeError(
-                            get_string("act_err_dump_size_mismatch").format(
-                                target=target,
-                                expected=expected_size_bytes,
-                                actual=actual_size_bytes
-                            )
-                        )
-                except (ValueError, OSError) as e:
-                    utils.ui.echo(get_string("act_skip_dump").format(target=target, e=f"Size validation error: {e}"))
+        for target in targets:
+            out_file = const.BACKUP_DIR / f"{target}.img"
+            utils.ui.echo(get_string("act_prep_dump").format(target=target))
+            try:
+                _run_edl_cmd(["r", target, str(out_file)], loader=const.EDL_LOADER_FILE)
+                utils.ui.echo(get_string("act_dump_success").format(target=target, file=out_file.name))
+            except Exception as e:
+                utils.ui.error(f"Failed to dump {target}: {e}")
 
-            utils.ui.echo(get_string("act_dump_success").format(target=target, file=out_file.name))
+        if not skip_reset:
+            utils.ui.echo(get_string("act_reset_sys"))
+            try:
+                _run_edl_cmd(["reset"], loader=const.EDL_LOADER_FILE)
+            except Exception:
+                pass
+        else:
+            utils.ui.echo(get_string("act_skip_reset"))
             
-        except (ValueError, FileNotFoundError) as e:
-            utils.ui.echo(get_string("act_skip_dump").format(target=target, e=e))
-        except Exception as e:
-            utils.ui.error(get_string("act_err_dump").format(target=target, e=e))
-
-        utils.ui.echo(get_string("act_wait_stability"))
-        time.sleep(5)
-
-    if not skip_reset:
-        utils.ui.echo(get_string("act_reset_sys"))
-        utils.ui.echo(get_string("device_resetting"))
-        dev.edl_reset(port)
-        utils.ui.echo(get_string("act_reset_sent"))
-        utils.ui.echo(get_string("act_wait_stability_long"))
-        time.sleep(10)
     else:
-        utils.ui.echo(get_string("act_skip_reset"))
+        port = _prepare_edl_session(dev)
+        for target in targets:
+            out_file = const.BACKUP_DIR / f"{target}.img"
+            utils.ui.echo(get_string("act_prep_dump").format(target=target))
+            
+            try:
+                params = ensure_params_or_fail(target)
+                utils.ui.echo(get_string("act_found_dump_info").format(xml=params['source_xml'], lun=params['lun'], start=params['start_sector']))
+                
+                utils.ui.echo(get_string("device_dumping_part").format(lun=params['lun'], start=params['start_sector'], num=params['num_sectors']))
+                dev.edl_write_partition(
+                    port=port,
+                    output_filename=str(out_file),
+                    lun=params['lun'],
+                    start_sector=params['start_sector'],
+                    num_sectors=params['num_sectors']
+                )
+                
+                if params.get('size_in_kb'):
+                    try:
+                        expected_size_bytes = int(float(params['size_in_kb']) * 1024)
+                        actual_size_bytes = out_file.stat().st_size
+                        
+                        if expected_size_bytes != actual_size_bytes:
+                            raise RuntimeError(
+                                get_string("act_err_dump_size_mismatch").format(
+                                    target=target,
+                                    expected=expected_size_bytes,
+                                    actual=actual_size_bytes
+                                )
+                            )
+                    except (ValueError, OSError) as e:
+                        utils.ui.echo(get_string("act_skip_dump").format(target=target, e=f"Size validation error: {e}"))
+
+                utils.ui.echo(get_string("act_dump_success").format(target=target, file=out_file.name))
+                
+            except (ValueError, FileNotFoundError) as e:
+                utils.ui.echo(get_string("act_skip_dump").format(target=target, e=e))
+            except Exception as e:
+                utils.ui.error(get_string("act_err_dump").format(target=target, e=e))
+
+            utils.ui.echo(get_string("act_wait_stability"))
+            time.sleep(5)
+
+        if not skip_reset:
+            utils.ui.echo(get_string("act_reset_sys"))
+            utils.ui.echo(get_string("device_resetting"))
+            dev.edl_reset(port)
+            utils.ui.echo(get_string("act_reset_sent"))
+            utils.ui.echo(get_string("act_wait_stability_long"))
+            time.sleep(10)
+        else:
+            utils.ui.echo(get_string("act_skip_reset"))
 
     utils.ui.echo(get_string("act_dump_finish"))
     utils.ui.echo(get_string("act_dump_saved").format(dir=const.BACKUP_DIR.name))
@@ -111,45 +175,74 @@ def flash_partitions(dev: device.DeviceController, skip_reset: bool = False, ski
         raise FileNotFoundError(get_string("act_err_dp_folder_nf").format(dir=const.OUTPUT_DP_DIR.name))
     utils.ui.echo(get_string("act_found_dp_folder").format(dir=const.OUTPUT_DP_DIR.name))
 
-    port = _prepare_edl_session(dev)
-
     targets = ["devinfo", "persist"]
+    
+    if is_edl_mode_enabled():
+        utils.ui.echo("Using bkerler's EDL tool...")
+        if not const.EDL_LOADER_FILE.exists():
+            utils.ui.error(get_string("act_err_loader_missing").format(name=const.EDL_LOADER_FILE.name, dir=const.IMAGE_DIR.name))
+            raise FileNotFoundError("Loader not found")
 
-    for target in targets:
-        image_path = const.OUTPUT_DP_DIR / f"{target}.img"
-
-        if not image_path.exists():
-            utils.ui.echo(get_string(f"act_skip_{target}"))
-            continue
-
-        utils.ui.echo(get_string("act_flashing_target").format(target=target))
-
-        try:
-            params = ensure_params_or_fail(target)
-            utils.ui.echo(get_string("act_found_boot_info").format(lun=params['lun'], start=params['start_sector']))
+        for target in targets:
+            image_path = const.OUTPUT_DP_DIR / f"{target}.img"
+            if not image_path.exists():
+                utils.ui.echo(get_string(f"act_skip_{target}"))
+                continue
             
-            utils.ui.echo(get_string("device_flashing_part").format(filename=image_path.name, lun=params['lun'], start=params['start_sector']))
-            dev.edl_write_partition(
-                port=port,
-                image_path=image_path,
-                lun=params['lun'],
-                start_sector=params['start_sector']
-            )
-            utils.ui.echo(get_string(f"act_flash_{target}_ok"))
+            utils.ui.echo(get_string("act_flashing_target").format(target=target))
+            try:
+                _run_edl_cmd(["w", target, str(image_path)], loader=const.EDL_LOADER_FILE)
+                utils.ui.echo(get_string(f"act_flash_{target}_ok"))
+            except Exception as e:
+                utils.ui.error(f"Failed to flash {target}: {e}")
+                raise
 
-        except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
-            utils.ui.error(get_string("act_err_edl_write").format(e=e))
-            raise
-
-    if not skip_reset:
-        utils.ui.echo(get_string("act_reboot_device"))
-        try:
-            utils.ui.echo(get_string("device_resetting"))
-            dev.edl_reset(port)
-        except Exception as e:
-            utils.ui.echo(get_string("act_warn_reboot").format(e=e))
+        if not skip_reset:
+            utils.ui.echo(get_string("act_reboot_device"))
+            try:
+                _run_edl_cmd(["reset"], loader=const.EDL_LOADER_FILE)
+            except Exception:
+                pass
+        else:
+             utils.ui.echo(get_string("act_skip_reboot"))
     else:
-        utils.ui.echo(get_string("act_skip_reboot"))
+        port = _prepare_edl_session(dev)
+
+        for target in targets:
+            image_path = const.OUTPUT_DP_DIR / f"{target}.img"
+
+            if not image_path.exists():
+                utils.ui.echo(get_string(f"act_skip_{target}"))
+                continue
+
+            utils.ui.echo(get_string("act_flashing_target").format(target=target))
+
+            try:
+                params = ensure_params_or_fail(target)
+                utils.ui.echo(get_string("act_found_boot_info").format(lun=params['lun'], start=params['start_sector']))
+                
+                utils.ui.echo(get_string("device_flashing_part").format(filename=image_path.name, lun=params['lun'], start=params['start_sector']))
+                dev.edl_write_partition(
+                    port=port,
+                    image_path=image_path,
+                    lun=params['lun'],
+                    start_sector=params['start_sector']
+                )
+                utils.ui.echo(get_string(f"act_flash_{target}_ok"))
+
+            except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
+                utils.ui.error(get_string("act_err_edl_write").format(e=e))
+                raise
+
+        if not skip_reset:
+            utils.ui.echo(get_string("act_reboot_device"))
+            try:
+                utils.ui.echo(get_string("device_resetting"))
+                dev.edl_reset(port)
+            except Exception as e:
+                utils.ui.echo(get_string("act_warn_reboot").format(e=e))
+        else:
+            utils.ui.echo(get_string("act_skip_reboot"))
 
     utils.ui.echo(get_string("act_write_finish"))
 
@@ -165,78 +258,125 @@ def write_anti_rollback(dev: device.DeviceController, skip_reset: bool = False) 
         raise FileNotFoundError(get_string("act_err_patched_missing_exc").format(dir=const.OUTPUT_ANTI_ROLLBACK_DIR.name))
     utils.ui.echo(get_string("act_found_arb_folder").format(dir=const.OUTPUT_ANTI_ROLLBACK_DIR.name))
     
-    if not const.EDL_LOADER_FILE.exists():
-        utils.ui.echo(get_string("act_err_loader_missing").format(name=const.EDL_LOADER_FILE.name, dir=const.IMAGE_DIR.name))
-        prompt = get_string("device_loader_prompt").format(loader=const.EDL_LOADER_FILENAME, folder=const.IMAGE_DIR.name)
-        utils.wait_for_files(const.IMAGE_DIR, [const.EDL_LOADER_FILENAME], prompt)
+    if is_edl_mode_enabled():
+        utils.ui.echo("Using bkerler's EDL tool...")
+        if not const.EDL_LOADER_FILE.exists():
+            utils.ui.error(get_string("act_err_loader_missing").format(name=const.EDL_LOADER_FILE.name, dir=const.IMAGE_DIR.name))
+            raise FileNotFoundError("Loader not found")
+            
+        utils.ui.echo(get_string("act_arb_write_step1"))
+        utils.ui.echo(get_string("act_boot_fastboot"))
+        dev.wait_for_fastboot()
 
-    if not list(const.OUTPUT_XML_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("*.x")):
-         utils.ui.echo(get_string("act_err_no_xmls").format(dir=const.IMAGE_DIR.name))
-         prompt = get_string("act_prompt_image")
-         utils.wait_for_directory(const.IMAGE_DIR, prompt)
-    
-    utils.ui.echo(get_string("act_arb_write_step1"))
-    utils.ui.echo(get_string("act_boot_fastboot"))
-    dev.wait_for_fastboot()
-
-    utils.ui.echo(get_string("device_get_slot_fastboot"))
-    active_slot = dev.get_active_slot_suffix_from_fastboot()
-    if active_slot:
-        utils.ui.echo(get_string("act_slot_confirmed").format(slot=active_slot))
-    else:
-        utils.ui.echo(get_string("act_warn_slot_fail"))
-        active_slot = ""
-
-    target_boot = f"boot{active_slot}"
-    target_vbmeta = f"vbmeta_system{active_slot}"
-
-    utils.ui.echo(get_string("act_arb_write_step2"))
-    utils.ui.echo(get_string("act_manual_edl_now"))
-    utils.ui.echo(get_string("act_manual_edl_hint"))
-    port = dev.wait_for_edl()
-    
-    try:
-        dev.load_firehose_programmer_with_stability(const.EDL_LOADER_FILE, port)
-
-        utils.ui.echo(get_string("act_arb_write_step3").format(slot=active_slot))
-
-        utils.ui.echo(get_string("act_write_boot").format(target=target_boot))
-        params_boot = ensure_params_or_fail(target_boot)
-        utils.ui.echo(get_string("act_found_boot_info").format(lun=params_boot['lun'], start=params_boot['start_sector']))
-        
-        utils.ui.echo(get_string("device_flashing_part").format(filename=boot_img.name, lun=params_boot['lun'], start=params_boot['start_sector']))
-        dev.edl_write_partition(
-            port=port,
-            image_path=boot_img,
-            lun=params_boot['lun'],
-            start_sector=params_boot['start_sector']
-        )
-        utils.ui.echo(get_string("act_write_boot_ok").format(target=target_boot))
-
-        utils.ui.echo(get_string("act_write_vbmeta").format(target=target_vbmeta))
-        params_vbmeta = ensure_params_or_fail(target_vbmeta)
-        utils.ui.echo(get_string("act_found_vbmeta_info").format(lun=params_vbmeta['lun'], start=params_vbmeta['start_sector']))
-        
-        utils.ui.echo(get_string("device_flashing_part").format(filename=vbmeta_img.name, lun=params_vbmeta['lun'], start=params_vbmeta['start_sector']))
-        dev.edl_write_partition(
-            port=port,
-            image_path=vbmeta_img,
-            lun=params_vbmeta['lun'],
-            start_sector=params_vbmeta['start_sector']
-        )
-        utils.ui.echo(get_string("act_write_vbmeta_ok").format(target=target_vbmeta))
-
-        if not skip_reset:
-            utils.ui.echo(get_string("act_arb_reset"))
-            utils.ui.echo(get_string("device_resetting"))
-            dev.edl_reset(port)
-            utils.ui.echo(get_string("act_reset_sent"))
+        utils.ui.echo(get_string("device_get_slot_fastboot"))
+        active_slot = dev.get_active_slot_suffix_from_fastboot()
+        if active_slot:
+            utils.ui.echo(get_string("act_slot_confirmed").format(slot=active_slot))
         else:
-            utils.ui.echo(get_string("act_arb_skip_reset"))
+            utils.ui.echo(get_string("act_warn_slot_fail"))
+            active_slot = ""
+        
+        target_boot = f"boot{active_slot}"
+        target_vbmeta = f"vbmeta_system{active_slot}"
 
-    except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
-        utils.ui.error(get_string("act_err_edl_write").format(e=e))
-        raise
+        utils.ui.echo(get_string("act_arb_write_step2"))
+        utils.ui.echo(get_string("act_manual_edl_now"))
+        utils.ui.echo(get_string("act_manual_edl_hint"))
+        dev.wait_for_edl()
+
+        try:
+            utils.ui.echo(get_string("act_arb_write_step3").format(slot=active_slot))
+
+            utils.ui.echo(get_string("act_write_boot").format(target=target_boot))
+            _run_edl_cmd(["w", target_boot, str(boot_img)], loader=const.EDL_LOADER_FILE)
+            utils.ui.echo(get_string("act_write_boot_ok").format(target=target_boot))
+
+            utils.ui.echo(get_string("act_write_vbmeta").format(target=target_vbmeta))
+            _run_edl_cmd(["w", target_vbmeta, str(vbmeta_img)], loader=const.EDL_LOADER_FILE)
+            utils.ui.echo(get_string("act_write_vbmeta_ok").format(target=target_vbmeta))
+
+            if not skip_reset:
+                utils.ui.echo(get_string("act_arb_reset"))
+                _run_edl_cmd(["reset"], loader=const.EDL_LOADER_FILE)
+            else:
+                utils.ui.echo(get_string("act_arb_skip_reset"))
+        except Exception as e:
+            utils.ui.error(f"EDL operation failed: {e}")
+            raise
+
+    else:
+        if not const.EDL_LOADER_FILE.exists():
+            utils.ui.echo(get_string("act_err_loader_missing").format(name=const.EDL_LOADER_FILE.name, dir=const.IMAGE_DIR.name))
+            prompt = get_string("device_loader_prompt").format(loader=const.EDL_LOADER_FILENAME, folder=const.IMAGE_DIR.name)
+            utils.wait_for_files(const.IMAGE_DIR, [const.EDL_LOADER_FILENAME], prompt)
+
+        if not list(const.OUTPUT_XML_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("rawprogram*.xml")) and not list(const.IMAGE_DIR.glob("*.x")):
+             utils.ui.echo(get_string("act_err_no_xmls").format(dir=const.IMAGE_DIR.name))
+             prompt = get_string("act_prompt_image")
+             utils.wait_for_directory(const.IMAGE_DIR, prompt)
+        
+        utils.ui.echo(get_string("act_arb_write_step1"))
+        utils.ui.echo(get_string("act_boot_fastboot"))
+        dev.wait_for_fastboot()
+
+        utils.ui.echo(get_string("device_get_slot_fastboot"))
+        active_slot = dev.get_active_slot_suffix_from_fastboot()
+        if active_slot:
+            utils.ui.echo(get_string("act_slot_confirmed").format(slot=active_slot))
+        else:
+            utils.ui.echo(get_string("act_warn_slot_fail"))
+            active_slot = ""
+
+        target_boot = f"boot{active_slot}"
+        target_vbmeta = f"vbmeta_system{active_slot}"
+
+        utils.ui.echo(get_string("act_arb_write_step2"))
+        utils.ui.echo(get_string("act_manual_edl_now"))
+        utils.ui.echo(get_string("act_manual_edl_hint"))
+        port = dev.wait_for_edl()
+        
+        try:
+            dev.load_firehose_programmer_with_stability(const.EDL_LOADER_FILE, port)
+
+            utils.ui.echo(get_string("act_arb_write_step3").format(slot=active_slot))
+
+            utils.ui.echo(get_string("act_write_boot").format(target=target_boot))
+            params_boot = ensure_params_or_fail(target_boot)
+            utils.ui.echo(get_string("act_found_boot_info").format(lun=params_boot['lun'], start=params_boot['start_sector']))
+            
+            utils.ui.echo(get_string("device_flashing_part").format(filename=boot_img.name, lun=params_boot['lun'], start=params_boot['start_sector']))
+            dev.edl_write_partition(
+                port=port,
+                image_path=boot_img,
+                lun=params_boot['lun'],
+                start_sector=params_boot['start_sector']
+            )
+            utils.ui.echo(get_string("act_write_boot_ok").format(target=target_boot))
+
+            utils.ui.echo(get_string("act_write_vbmeta").format(target=target_vbmeta))
+            params_vbmeta = ensure_params_or_fail(target_vbmeta)
+            utils.ui.echo(get_string("act_found_vbmeta_info").format(lun=params_vbmeta['lun'], start=params_vbmeta['start_sector']))
+            
+            utils.ui.echo(get_string("device_flashing_part").format(filename=vbmeta_img.name, lun=params_vbmeta['lun'], start=params_vbmeta['start_sector']))
+            dev.edl_write_partition(
+                port=port,
+                image_path=vbmeta_img,
+                lun=params_vbmeta['lun'],
+                start_sector=params_vbmeta['start_sector']
+            )
+            utils.ui.echo(get_string("act_write_vbmeta_ok").format(target=target_vbmeta))
+
+            if not skip_reset:
+                utils.ui.echo(get_string("act_arb_reset"))
+                utils.ui.echo(get_string("device_resetting"))
+                dev.edl_reset(port)
+                utils.ui.echo(get_string("act_reset_sent"))
+            else:
+                utils.ui.echo(get_string("act_arb_skip_reset"))
+
+        except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
+            utils.ui.error(get_string("act_err_edl_write").format(e=e))
+            raise
     
     utils.ui.echo(get_string("act_arb_write_finish"))
 
@@ -339,43 +479,79 @@ def flash_full_firmware(dev: device.DeviceController, skip_reset: bool = False, 
             return
 
     _prepare_flash_files(skip_dp)
-
-    port = dev.setup_edl_connection()
-
-    raw_xmls, patch_xmls = _select_flash_xmls(skip_dp)
-        
-    utils.ui.echo(get_string("act_flash_step1"))
     
-    try:
-        dev.edl_rawprogram(loader_path, "UFS", raw_xmls, patch_xmls, port)
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        utils.ui.error(get_string("act_err_main_flash").format(e=e))
-        utils.ui.echo(get_string("act_warn_unstable"))
-        raise
+    raw_xmls, patch_xmls = _select_flash_xmls(skip_dp)
+    
+    if is_edl_mode_enabled():
+        utils.ui.echo("Using bkerler's EDL tool...")
+        utils.ui.echo(get_string("act_flash_step1"))
         
-    utils.ui.echo(get_string("act_flash_step2"))
-    if not skip_dp:
+        cwd_bkp = os.getcwd()
         try:
-            (const.IMAGE_DIR / "devinfo.img").unlink(missing_ok=True)
-            (const.IMAGE_DIR / "persist.img").unlink(missing_ok=True)
-            utils.ui.echo(get_string("act_removed_temp_imgs"))
-        except OSError as e:
-            utils.ui.error(get_string("act_err_clean_imgs").format(e=e))
+            os.chdir(const.IMAGE_DIR)
+            for xml_file in raw_xmls:
+                 utils.ui.echo(f"Processing {xml_file.name}...")
+                 _run_edl_cmd(["xml", xml_file.name], loader=loader_path)
+        except Exception as e:
+            utils.ui.error(f"Failed to flash firmware via EDL: {e}")
+            raise
+        finally:
+            os.chdir(cwd_bkp)
 
-    if not skip_reset:
-        utils.ui.echo(get_string("act_flash_step3"))
-        try:
-            utils.ui.echo(get_string("act_wait_stability"))
-            time.sleep(5)
-            
-            utils.ui.echo(get_string("act_reset_sys"))
-            utils.ui.echo(get_string("device_resetting"))
-            dev.edl_reset(port)
-            utils.ui.echo(get_string("act_reset_sent"))
-        except (subprocess.CalledProcessError, FileNotFoundError, Exception) as e:
-             utils.ui.error(get_string("act_err_reset").format(e=e))
+        utils.ui.echo(get_string("act_flash_step2"))
+        if not skip_dp:
+            try:
+                (const.IMAGE_DIR / "devinfo.img").unlink(missing_ok=True)
+                (const.IMAGE_DIR / "persist.img").unlink(missing_ok=True)
+                utils.ui.echo(get_string("act_removed_temp_imgs"))
+            except OSError as e:
+                utils.ui.error(get_string("act_err_clean_imgs").format(e=e))
+
+        if not skip_reset:
+            utils.ui.echo(get_string("act_flash_step3"))
+            try:
+                utils.ui.echo(get_string("act_reset_sys"))
+                _run_edl_cmd(["reset"], loader=loader_path)
+            except Exception as e:
+                 utils.ui.error(get_string("act_err_reset").format(e=e))
+        else:
+            utils.ui.echo(get_string("act_skip_final_reset"))
+
     else:
-        utils.ui.echo(get_string("act_skip_final_reset"))
+        port = dev.setup_edl_connection()
+            
+        utils.ui.echo(get_string("act_flash_step1"))
+        
+        try:
+            dev.edl_rawprogram(loader_path, "UFS", raw_xmls, patch_xmls, port)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            utils.ui.error(get_string("act_err_main_flash").format(e=e))
+            utils.ui.echo(get_string("act_warn_unstable"))
+            raise
+            
+        utils.ui.echo(get_string("act_flash_step2"))
+        if not skip_dp:
+            try:
+                (const.IMAGE_DIR / "devinfo.img").unlink(missing_ok=True)
+                (const.IMAGE_DIR / "persist.img").unlink(missing_ok=True)
+                utils.ui.echo(get_string("act_removed_temp_imgs"))
+            except OSError as e:
+                utils.ui.error(get_string("act_err_clean_imgs").format(e=e))
+
+        if not skip_reset:
+            utils.ui.echo(get_string("act_flash_step3"))
+            try:
+                utils.ui.echo(get_string("act_wait_stability"))
+                time.sleep(5)
+                
+                utils.ui.echo(get_string("act_reset_sys"))
+                utils.ui.echo(get_string("device_resetting"))
+                dev.edl_reset(port)
+                utils.ui.echo(get_string("act_reset_sent"))
+            except (subprocess.CalledProcessError, FileNotFoundError, Exception) as e:
+                 utils.ui.error(get_string("act_err_reset").format(e=e))
+        else:
+            utils.ui.echo(get_string("act_skip_final_reset"))
 
     if not skip_reset:
         utils.ui.echo(get_string("act_flash_finish"))

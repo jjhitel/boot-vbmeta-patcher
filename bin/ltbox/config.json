@@ -49,5 +49,6 @@
     "TJ": "Tajikistan", "TN": "Tunisia", "TR": "Turkey", "TW": "Taiwan", "TZ": "Tanzania",
     "UA": "Ukraine", "UG": "Uganda", "US": "United States of America", "UY": "Uruguay",
     "UZ": "Uzbekistan", "VE": "Venezuela", "VN": "Vietnam", "ZA": "South Africa"
-  }
+  },
+  "use_bkerler_edl": false
 }
