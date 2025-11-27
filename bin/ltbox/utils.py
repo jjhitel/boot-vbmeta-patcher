@@ -24,11 +24,10 @@ class ConsoleUI:
         self.echo(message, err=True)
 
     def box_output(self, lines: List[str], err: bool = False) -> None:
-        width = 61
-        self.echo("\n" + "!" * width, err=err)
+        self.echo("", err=err)
         for line in lines:
              self.echo(line, err=err)
-        self.echo("!" * width + "\n", err=err)
+        self.echo("", err=err)
 
     def prompt(self, message: str = "") -> str:
         return input(message)
