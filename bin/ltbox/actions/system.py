@@ -49,6 +49,7 @@ def disable_ota(dev: device.DeviceController) -> None:
     utils.ui.echo(get_string("act_ota_settings_put"))
     try:
         dev.adb_shell("settings put global ota_disable_automatic_update 1")
+        dev.adb_shell("settings put secure lenovo_ota_new_version_found 0")
     except Exception as e:
         utils.ui.echo(f"Warning: Failed to update settings: {e}", err=True)
 
