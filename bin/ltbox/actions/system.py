@@ -1,3 +1,4 @@
+import subprocess
 from typing import Optional, Dict
 
 from .. import constants as const
@@ -40,39 +41,41 @@ def detect_active_slot_robust(dev: device.DeviceController) -> Optional[str]:
 
     return active_slot
 
-def disable_ota(dev: device.DeviceController) -> str:
-    if dev.skip_adb:
-        raise ToolError(get_string("act_ota_skip_adb"))
+def disable_ota(dev: device.DeviceController) -> None:
+    utils.ui.echo(get_string("act_start_ota"))
     
     dev.wait_for_adb()
-    
-    command = [
-        str(const.ADB_EXE), 
-        "shell", "pm", "disable-user", "--user", "0", "com.lenovo.ota"
-    ]
-    
+
+    utils.ui.echo(get_string("act_ota_settings_put"))
     try:
-        clear_cmd = [
-            str(const.ADB_EXE),
-            "shell", "pm", "clear", "--user", "0", "com.lenovo.ota"
-        ]
-        utils.run_command(clear_cmd, capture=True)
+        utils.run_command(
+            [str(const.ADB_EXE), "shell", "settings", "put", "global", "ota_disable_automatic_update", "1"]
+        )
+    except subprocess.CalledProcessError as e:
+        utils.ui.echo(f"Warning: Failed to update settings: {e}", err=True)
 
-        disable_cmd = [
-            str(const.ADB_EXE),
-            "shell", "pm", "disable-user", "--user", "0", "com.lenovo.ota"
-        ]
-        result = utils.run_command(disable_cmd, capture=True)
+    packages = [
+        "com.lenovo.ota",
+        "com.tblenovo.lenovowhatsnew",
+        "com.lenovo.tbengine"
+    ]
 
-        if "disabled" in result.stdout.lower() or "already disabled" in result.stdout.lower():
-            success_msg = get_string("act_ota_disabled")
-            success_msg += f"\n{result.stdout.strip()}"
-            return success_msg
-        else:
-            err_msg = get_string("act_ota_unexpected")
-            err_msg += f"\n{get_string('act_ota_stdout').format(output=result.stdout.strip())}"
-            if result.stderr:
-                err_msg += f"\n{get_string('act_ota_stderr').format(output=result.stderr.strip())}"
-            raise ToolError(err_msg)
-    except Exception as e:
-        raise ToolError(get_string("act_err_ota_cmd").format(e=e))
+    for pkg in packages:
+        try:
+            utils.run_command(
+                [str(const.ADB_EXE), "shell", "pm", "clear", pkg], 
+                check=False
+            )
+        except Exception:
+            pass
+
+        utils.ui.echo(get_string("act_ota_uninstalling").format(pkg=pkg))
+        try:
+            utils.run_command(
+                [str(const.ADB_EXE), "shell", "pm", "uninstall", "-k", "--user", "0", pkg]
+            )
+            utils.ui.echo(get_string("act_ota_uninstall_success").format(pkg=pkg))
+        except subprocess.CalledProcessError:
+            utils.ui.echo(get_string("act_ota_uninstall_fail").format(pkg=pkg))
+
+    utils.ui.echo(get_string("act_ota_finished"))
