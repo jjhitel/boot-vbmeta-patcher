@@ -91,8 +91,6 @@ ANYKERNEL_ZIP_FILENAME = _get_cfg("kernelsu", "anykernel_zip")
 EDL_LOADER_FILENAME = _get_cfg("edl", "loader_filename")
 EDL_LOADER_FILE = IMAGE_DIR / EDL_LOADER_FILENAME 
 
-FETCH_VERSION = _get_cfg("tools", "fetch_version")
-FETCH_REPO_URL = _get_cfg("tools", "fetch_repo_url")
 PLATFORM_TOOLS_ZIP_URL = _get_cfg("tools", "platform_tools_url")
 AVB_ARCHIVE_URL = _get_cfg("tools", "avb_archive_url")
 

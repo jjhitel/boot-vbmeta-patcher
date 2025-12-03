@@ -453,7 +453,6 @@
   "dl_extract_failed": "[!] Не удалось извлечь {filename}: {error}",
   "dl_extracted_file": "    > Извлечёно: {filename}",
   "dl_extracting": "[*] Извлечение {filename}...",
-  "dl_fetch_not_found": "[!] 'fetch.exe' не найден. Отмена.",
   "dl_gki_download_fail": "[!] Не удалось загрузить AnyKernel3.zip для ядра {version}.",
   "dl_gki_download_ok": "[+] Загрузка завершена.",
   "dl_gki_downloading": "\n[*] Загрузка ядра GKI...",

@@ -453,7 +453,6 @@
   "dl_extract_failed": "[!] Failed to extract {filename}: {error}",
   "dl_extracted_file": "    > Extracted {filename}",
   "dl_extracting": "[*] Extracting {filename}...",
-  "dl_fetch_not_found": "[!] 'fetch.exe' not found. Aborting.",
   "dl_gki_download_fail": "[!] Failed to download AnyKernel3.zip for kernel {version}.",
   "dl_gki_download_ok": "[+] Download complete.",
   "dl_gki_downloading": "\n[*] Downloading GKI Kernel...",

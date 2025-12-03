@@ -1,7 +1,5 @@
 {
   "tools": {
-    "fetch_version": "v0.4.6",
-    "fetch_repo_url": "https://github.com/gruntwork-io/fetch",
     "platform_tools_url": "https://dl.google.com/android/repository/platform-tools-latest-windows.zip",
     "avb_archive_url": "https://android.googlesource.com/platform/external/avb/+archive/refs/heads/main.tar.gz"
   },

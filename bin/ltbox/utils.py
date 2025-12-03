@@ -134,8 +134,7 @@ def check_dependencies() -> None:
         "Python Environment": const.PYTHON_EXE,
         "ADB": const.ADB_EXE,
         "Fastboot": const.FASTBOOT_EXE,
-        "avbtool": const.AVBTOOL_PY,
-        "fetch tool": get_platform_executable("fetch")
+        "avbtool": const.AVBTOOL_PY
     }
     
     for path in const.KEY_MAP.values():

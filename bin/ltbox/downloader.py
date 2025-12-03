@@ -65,14 +65,45 @@ def extract_archive_files(archive_path: Path, extract_map: Dict[str, Path]) -> N
         utils.ui.error(msg_err)
         raise ToolError(get_string("dl_err_extract_tool").format(name=archive_path.name))
 
-def _run_fetch_command(args: List[str]) -> subprocess.CompletedProcess:
-    fetch_exe = const.DOWNLOAD_DIR / "fetch.exe"
-    if not fetch_exe.exists():
-        utils.ui.echo(get_string("dl_fetch_not_found"))
-        raise FileNotFoundError(get_string("dl_fetch_not_found"))
+def _download_github_asset(repo_url: str, tag: str, asset_pattern: str, dest_dir: Path) -> Path:
+    import requests
     
-    command = [str(fetch_exe)] + args
-    return utils.run_command(command, capture=True)
+    if "github.com/" in repo_url:
+        owner_repo = repo_url.split("github.com/")[-1]
+    else:
+        owner_repo = repo_url
+
+    api_url = f"https://api.github.com/repos/{owner_repo}/releases/tags/{tag}"
+    
+    try:
+        response = requests.get(api_url)
+        response.raise_for_status()
+        release_data = response.json()
+        
+        target_asset = None
+        for asset in release_data.get('assets', []):
+            if re.match(asset_pattern, asset['name']):
+                target_asset = asset
+                break
+        
+        if not target_asset:
+            raise ToolError(get_string("dl_err_download_tool").format(name=asset_pattern))
+
+        download_url = target_asset['browser_download_url']
+        filename = target_asset['name']
+        dest_path = dest_dir / filename
+
+        utils.ui.echo(get_string("dl_downloading").format(filename=filename))
+        
+        with requests.get(download_url, stream=True) as r:
+            r.raise_for_status()
+            with open(dest_path, 'wb') as f:
+                shutil.copyfileobj(r.raw, f)
+                
+        return dest_path
+
+    except Exception as e:
+        raise ToolError(f"GitHub download failed: {e}")
 
 def _ensure_tool_from_github_release(
     tool_name: str, 
@@ -99,19 +130,7 @@ def _ensure_tool_from_github_release(
     utils.ui.echo(msg)
 
     try:
-        fetch_command = [
-            "--repo", repo_url,
-            "--tag", tag,
-            "--release-asset", asset_pattern,
-            str(const.DOWNLOAD_DIR)
-        ]
-        _run_fetch_command(fetch_command)
-
-        downloaded_zips = list(const.DOWNLOAD_DIR.glob(f"*{tool_name}*.zip"))
-        if not downloaded_zips:
-            raise FileNotFoundError(get_string("dl_err_zip_not_found").format(tool_name=tool_name))
-
-        downloaded_zip_path = downloaded_zips[0]
+        downloaded_zip_path = _download_github_asset(repo_url, tag, asset_pattern, const.DOWNLOAD_DIR)
 
         with zipfile.ZipFile(downloaded_zip_path, 'r') as zip_ref:
             exe_info = None
@@ -140,29 +159,10 @@ def _ensure_tool_from_github_release(
         utils.ui.echo(get_string("dl_tool_success").format(tool_name=tool_name))
         return tool_exe
 
-    except (subprocess.CalledProcessError, FileNotFoundError, zipfile.BadZipFile, OSError, ToolError) as e:
+    except (FileNotFoundError, zipfile.BadZipFile, OSError, ToolError) as e:
         msg_err = get_string("dl_tool_failed").format(tool_name=tool_name, error=e)
         utils.ui.error(msg_err)
         raise ToolError(msg_err)
-
-def ensure_fetch() -> Path:
-    tool_exe = const.DOWNLOAD_DIR / "fetch.exe"
-    if tool_exe.exists():
-        return tool_exe
-    
-    const.DOWNLOAD_DIR.mkdir(exist_ok=True)
-    
-    asset_patterns = {
-        'AMD64': "fetch_windows_amd64.exe",
-    }
-    arch = platform.machine()
-    asset_name = asset_patterns.get(arch)
-    if not asset_name:
-         raise ToolError(get_string("dl_err_unsupported_arch_fetch").format(arch=arch))
-
-    url = f"{const.FETCH_REPO_URL}/releases/download/{const.FETCH_VERSION}/{asset_name}"
-    download_resource(url, tool_exe)
-    return tool_exe
 
 def ensure_platform_tools() -> None:
     if const.ADB_EXE.exists() and const.FASTBOOT_EXE.exists():
@@ -235,44 +235,39 @@ def ensure_magiskboot() -> Path:
 def get_gki_kernel(kernel_version: str, work_dir: Path) -> Path:
     utils.ui.echo(get_string("dl_gki_downloading"))
     asset_pattern = f".*{kernel_version}.*Normal-AnyKernel3.zip"
-    fetch_command = [
-        "--repo", const.REPO_URL, "--tag", const.RELEASE_TAG,
-        "--release-asset", asset_pattern, str(work_dir)
-    ]
-    _run_fetch_command(fetch_command)
+    
+    try:
+        downloaded_zip = _download_github_asset(const.REPO_URL, const.RELEASE_TAG, asset_pattern, work_dir)
+        
+        anykernel_zip = work_dir / const.ANYKERNEL_ZIP_FILENAME
+        shutil.move(downloaded_zip, anykernel_zip)
+        utils.ui.echo(get_string("dl_gki_download_ok"))
 
-    downloaded_files = list(work_dir.glob(f"*{kernel_version}*Normal-AnyKernel3.zip"))
-    if not downloaded_files:
+        utils.ui.echo(get_string("dl_gki_extracting"))
+        extracted_kernel_dir = work_dir / "extracted_kernel"
+        with zipfile.ZipFile(anykernel_zip, 'r') as zip_ref:
+            zip_ref.extractall(extracted_kernel_dir)
+        
+        kernel_image = extracted_kernel_dir / "Image"
+        if not kernel_image.exists():
+            utils.ui.echo(get_string("dl_gki_image_missing"))
+            raise ToolError(get_string("dl_gki_image_missing"))
+        utils.ui.echo(get_string("dl_gki_extract_ok"))
+        return kernel_image
+    except Exception as e:
         utils.ui.echo(get_string("dl_gki_download_fail").format(version=kernel_version))
-        raise ToolError(get_string("dl_gki_download_fail").format(version=kernel_version))
-    
-    anykernel_zip = work_dir / const.ANYKERNEL_ZIP_FILENAME
-    shutil.move(downloaded_files[0], anykernel_zip)
-    utils.ui.echo(get_string("dl_gki_download_ok"))
-
-    utils.ui.echo(get_string("dl_gki_extracting"))
-    extracted_kernel_dir = work_dir / "extracted_kernel"
-    with zipfile.ZipFile(anykernel_zip, 'r') as zip_ref:
-        zip_ref.extractall(extracted_kernel_dir)
-    
-    kernel_image = extracted_kernel_dir / "Image"
-    if not kernel_image.exists():
-        utils.ui.echo(get_string("dl_gki_image_missing"))
-        raise ToolError(get_string("dl_gki_image_missing"))
-    utils.ui.echo(get_string("dl_gki_extract_ok"))
-    return kernel_image
+        raise ToolError(f"{e}")
 
 def download_ksu_apk(target_dir: Path) -> None:
     utils.ui.echo(get_string("dl_ksu_downloading"))
     if list(target_dir.glob("*spoofed*.apk")):
         utils.ui.echo(get_string("dl_ksu_exists"))
     else:
-        ksu_apk_command = [
-            "--repo", f"https://github.com/{const.KSU_APK_REPO}", "--tag", const.KSU_APK_TAG,
-            "--release-asset", ".*spoofed.*\\.apk", str(target_dir)
-        ]
-        _run_fetch_command(ksu_apk_command)
-        utils.ui.echo(get_string("dl_ksu_success"))
+        try:
+            _download_github_asset(f"https://github.com/{const.KSU_APK_REPO}", const.KSU_APK_TAG, ".*spoofed.*\\.apk", target_dir)
+            utils.ui.echo(get_string("dl_ksu_success"))
+        except Exception as e:
+             utils.ui.error(f"Failed to download KSU APK: {e}")
 
 def download_ksuinit(target_path: Path) -> None:
     if target_path.exists():
@@ -311,28 +306,14 @@ def get_lkm_kernel(target_path: Path, kernel_version: str) -> None:
     asset_pattern_regex = f"android.*-{kernel_version}_kernelsu.ko"
     utils.ui.echo(get_string("dl_lkm_downloading").format(asset=asset_pattern_regex))
     
-    fetch_command = [
-        "--repo", f"https://github.com/{const.KSU_APK_REPO}",
-        "--tag", const.KSU_APK_TAG,
-        "--release-asset", asset_pattern_regex,
-        str(target_path.parent)
-    ]
-    
     try:
-        _run_fetch_command(fetch_command)
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        downloaded_file = _download_github_asset(f"https://github.com/{const.KSU_APK_REPO}", const.KSU_APK_TAG, asset_pattern_regex, target_path.parent)
+        shutil.move(downloaded_file, target_path)
+        utils.ui.echo(get_string("dl_lkm_download_ok"))
+    except Exception as e:
         utils.ui.error(get_string("dl_lkm_download_fail").format(asset=asset_pattern_regex))
         utils.ui.error(f"[!] {e}")
-        raise ToolError(get_string("dl_lkm_download_fail").format(asset=asset_pattern_regex))
-    
-    downloaded_files = list(target_path.parent.glob(f"android*-{kernel_version}_kernelsu.ko"))
-    
-    if not downloaded_files:
-        raise ToolError(get_string("dl_lkm_download_fail").format(asset=asset_pattern_regex))
-    
-    downloaded_file = downloaded_files[0]
-    shutil.move(downloaded_file, target_path)
-    utils.ui.echo(get_string("dl_lkm_download_ok"))
+        raise ToolError(str(e))
 
 def install_base_tools(lang_code: str = "en"):
     i18n_load_lang(lang_code)
@@ -347,7 +328,6 @@ def install_base_tools(lang_code: str = "en"):
             check=True
         )
         
-        ensure_fetch()
         ensure_platform_tools()
         ensure_avb_tools()
         utils.ui.echo(get_string("dl_base_complete"))
