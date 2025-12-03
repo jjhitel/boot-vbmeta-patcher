@@ -9,7 +9,7 @@ from . import edl
 from .. import constants as const
 from .. import utils, device
 from ..partition import ensure_params_or_fail
-from ..patch.region import edit_vendor_boot, detect_region_codes, patch_region_codes
+from ..patch.region import edit_vendor_boot, detect_country_codes, patch_country_codes
 from ..patch.avb import extract_image_avb_info
 from ..i18n import get_string
 
@@ -244,7 +244,7 @@ def edit_devinfo_persist() -> Optional[str]:
     const.OUTPUT_DP_DIR.mkdir(exist_ok=True)
 
     print(get_string("act_detect_codes"))
-    detected_codes = detect_region_codes()
+    detected_codes = detect_country_codes()
     
     status_messages = []
     files_found = 0
@@ -290,7 +290,7 @@ def edit_devinfo_persist() -> Optional[str]:
     if choice == 'y':
         target_map = detected_codes.copy()
         replacement_code = select_country_code(get_string("act_select_new_code"))
-        patch_region_codes(replacement_code, target_map)
+        patch_country_codes(replacement_code, target_map)
 
         modified_devinfo = const.BASE_DIR / "devinfo_modified.img"
         modified_persist = const.BASE_DIR / "persist_modified.img"

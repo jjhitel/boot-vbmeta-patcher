@@ -49,7 +49,7 @@ def edit_vendor_boot(input_file_path: str, copy_if_unchanged: bool = True) -> bo
         
     return success
 
-def detect_region_codes() -> Dict[str, Optional[str]]:
+def detect_country_codes() -> Dict[str, Optional[str]]:
     results: Dict[str, Optional[str]] = {}
     files_to_check = ["devinfo.img", "persist.img"]
 
@@ -76,7 +76,7 @@ def detect_region_codes() -> Dict[str, Optional[str]]:
             
     return results
 
-def _patch_region_code_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dict[str, Any]]:
+def _patch_country_code_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dict[str, Any]]:
     current_code = kwargs.get('current_code')
     replacement_code = kwargs.get('replacement_code')
     
@@ -100,7 +100,7 @@ def _patch_region_code_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dict
     
     return content, {'changed': False, 'message': get_string("img_code_not_found").format(target=target_string)}
 
-def patch_region_codes(replacement_code: str, target_map: Dict[str, Optional[str]]) -> int:
+def patch_country_codes(replacement_code: str, target_map: Dict[str, Optional[str]]) -> int:
     if not replacement_code or len(replacement_code) != 2:
         msg = get_string("img_patch_code_err").format(code=replacement_code)
         print(msg, file=sys.stderr)
@@ -133,7 +133,7 @@ def patch_region_codes(replacement_code: str, target_map: Dict[str, Optional[str
         success = utils._process_binary_file(
             input_file, 
             output_file, 
-            _patch_region_code_logic, 
+            _patch_country_code_logic, 
             copy_if_unchanged=True,
             current_code=current_code, 
             replacement_code=replacement_code
