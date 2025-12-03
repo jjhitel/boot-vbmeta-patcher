@@ -48,10 +48,8 @@ def disable_ota(dev: device.DeviceController) -> None:
 
     utils.ui.echo(get_string("act_ota_settings_put"))
     try:
-        utils.run_command(
-            [str(const.ADB_EXE), "shell", "settings", "put", "global", "ota_disable_automatic_update", "1"]
-        )
-    except subprocess.CalledProcessError as e:
+        dev.adb_shell("settings put global ota_disable_automatic_update 1")
+    except Exception as e:
         utils.ui.echo(f"Warning: Failed to update settings: {e}", err=True)
 
     packages = [
@@ -62,20 +60,18 @@ def disable_ota(dev: device.DeviceController) -> None:
 
     for pkg in packages:
         try:
-            utils.run_command(
-                [str(const.ADB_EXE), "shell", "pm", "clear", pkg], 
-                check=False
-            )
+            dev.adb_shell(f"pm clear {pkg}")
         except Exception:
             pass
 
         utils.ui.echo(get_string("act_ota_uninstalling").format(pkg=pkg))
         try:
-            utils.run_command(
-                [str(const.ADB_EXE), "shell", "pm", "uninstall", "-k", "--user", "0", pkg]
-            )
-            utils.ui.echo(get_string("act_ota_uninstall_success").format(pkg=pkg))
-        except subprocess.CalledProcessError:
+            output = dev.adb_shell(f"pm uninstall -k --user 0 {pkg}")
+            if "Success" in output:
+                utils.ui.echo(get_string("act_ota_uninstall_success").format(pkg=pkg))
+            else:
+                utils.ui.echo(get_string("act_ota_uninstall_fail").format(pkg=pkg))
+        except Exception:
             utils.ui.echo(get_string("act_ota_uninstall_fail").format(pkg=pkg))
 
     utils.ui.echo(get_string("act_ota_finished"))

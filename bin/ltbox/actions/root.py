@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -30,7 +31,7 @@ def _patch_lkm_via_app(
     apk_path = ksu_apks[0]
     utils.ui.echo(get_string("act_install_ksu").format(name=apk_path.name))
     try:
-        utils.run_command([str(const.ADB_EXE), "install", "-r", str(apk_path)])
+        dev.install_apk(str(apk_path))
         utils.ui.echo(get_string("act_ksu_ok"))
     except Exception as e:
         utils.ui.echo(get_string("act_err_ksu").format(e=e))
@@ -40,7 +41,7 @@ def _patch_lkm_via_app(
     local_img_path = work_dir / img_name
     remote_img_path = f"/sdcard/{img_name}"
     try:
-        utils.run_command([str(const.ADB_EXE), "push", str(local_img_path), remote_img_path])
+        dev.push_file(str(local_img_path), remote_img_path)
     except Exception as e:
         utils.ui.echo(get_string("act_err_push_init_boot").format(e=e))
         return None
@@ -54,14 +55,13 @@ def _patch_lkm_via_app(
     
     utils.ui.echo(get_string("act_find_patched_file"))
     try:
-        list_cmd = [str(const.ADB_EXE), "shell", "ls", "-t", "/sdcard/Download/kernelsu_next_patched_*.img"]
-        result = utils.run_command(list_cmd, capture=True, check=False)
+        cmd_output = dev.adb_shell("ls -t /sdcard/Download/kernelsu_next_patched_*.img")
         
-        if result.returncode != 0 or not result.stdout.strip():
+        if not cmd_output.strip():
             utils.ui.echo(get_string("act_err_no_patched_files"))
             return None
 
-        files = result.stdout.strip().splitlines()
+        files = cmd_output.strip().splitlines()
         latest_file_remote = files[0].strip()
         
         if not latest_file_remote:
@@ -73,8 +73,8 @@ def _patch_lkm_via_app(
         final_path = const.BASE_DIR / "init_boot.root.img"
         if final_path.exists():
             final_path.unlink()
-        
-        utils.run_command([str(const.ADB_EXE), "pull", latest_file_remote, str(final_path)])
+
+        dev.pull_file(latest_file_remote, str(final_path))
         
         if not final_path.exists():
             utils.ui.echo(get_string("act_err_pull_failed"))
@@ -310,7 +310,7 @@ def root_device(dev: device.DeviceController, gki: bool = False) -> None:
             apk_path = ksu_apks[0]
             utils.ui.echo(get_string("act_install_ksu").format(name=apk_path.name))
             try:
-                utils.run_command([str(const.ADB_EXE), "install", "-r", str(apk_path)])
+                dev.install_apk(str(apk_path))
                 utils.ui.echo(get_string("act_ksu_ok"))
             except Exception as e:
                 utils.ui.echo(get_string("act_err_ksu").format(e=e))
