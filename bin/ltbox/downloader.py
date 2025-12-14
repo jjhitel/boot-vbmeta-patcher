@@ -360,17 +360,20 @@ def download_sukisu_manager(target_dir: Path) -> None:
         with zipfile.ZipFile(temp_zip, 'r') as zf:
             for member in zf.infolist():
                 if member.filename.startswith("SukiSU") and member.filename.endswith(".apk"):
-                    source = zf.open(member)
-                    target = target_dir / Path(member.filename).name
-                    with open(target, "wb") as t:
-                        shutil.copyfileobj(source, t)
+                    with zf.open(member) as source:
+                        target = target_dir / Path(member.filename).name
+                        with open(target, "wb") as t:
+                            shutil.copyfileobj(source, t)
                     utils.ui.echo(get_string("dl_ksu_success"))
                     break
     except Exception as e:
         utils.ui.error(get_string("dl_err_ksu_download").format(e=e))
     finally:
         if temp_zip.exists():
-            temp_zip.unlink()
+            try:
+                temp_zip.unlink()
+            except OSError:
+                pass
 
 def download_sukisu_init(target_path: Path) -> None:
     if target_path.exists():
