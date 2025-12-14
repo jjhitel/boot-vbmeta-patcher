@@ -22,9 +22,12 @@ def _patch_lkm_via_app(
     img_name: str,
     root_type: str = "ksu"
 ) -> Optional[Path]:
-    utils.ui.echo(get_string("act_check_ksu"))
+    is_sukisu = (root_type == "sukisu")
+    check_key = "act_check_sukisu" if is_sukisu else "act_check_ksu"
     
-    if root_type == "sukisu":
+    utils.ui.echo(get_string(check_key))
+    
+    if is_sukisu:
         downloader.download_sukisu_manager(const.BASE_DIR)
         ksu_apks = list(const.BASE_DIR.glob("SukiSU*.apk"))
     else:
@@ -32,7 +35,8 @@ def _patch_lkm_via_app(
         ksu_apks = list(const.BASE_DIR.glob("*spoofed*.apk"))
 
     if not ksu_apks:
-        utils.ui.echo(get_string("act_skip_ksu"))
+        skip_key = "act_skip_sukisu" if is_sukisu else "act_skip_ksu"
+        utils.ui.echo(get_string(skip_key))
         return None
     
     apk_path = ksu_apks[0]
@@ -53,7 +57,8 @@ def _patch_lkm_via_app(
         utils.ui.echo(get_string("act_err_push_init_boot").format(e=e))
         return None
     
-    utils.ui.echo(get_string("act_prompt_patch_app"))
+    prompt_key = "act_prompt_patch_app_sukisu" if is_sukisu else "act_prompt_patch_app"
+    utils.ui.echo(get_string(prompt_key))
     utils.ui.echo(get_string("press_enter_to_continue"))
     try:
         utils.ui.prompt()
@@ -62,8 +67,9 @@ def _patch_lkm_via_app(
     
     utils.ui.echo(get_string("act_find_patched_file"))
     try:
-        if root_type == "sukisu":
-             cmd_output = dev.adb_shell("ls -t /sdcard/Download/sukisu_patched_*.img")
+        if is_sukisu:
+             # Sukisu saves as kernelsu_patched_*.img
+             cmd_output = dev.adb_shell("ls -t /sdcard/Download/kernelsu_patched_*.img")
         else:
              cmd_output = dev.adb_shell("ls -t /sdcard/Download/kernelsu_next_patched_*.img")
         
@@ -286,9 +292,11 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
         target_vbmeta_partition = "vbmeta"
 
     if not dev.skip_adb:
-        utils.ui.echo(get_string("act_check_ksu"))
+        is_sukisu = (root_type == "sukisu")
+        check_key = "act_check_sukisu" if is_sukisu else "act_check_ksu"
+        utils.ui.echo(get_string(check_key))
         
-        if root_type == "sukisu":
+        if is_sukisu:
             downloader.download_sukisu_manager(const.BASE_DIR)
             ksu_apks = list(const.BASE_DIR.glob("SukiSU*.apk"))
         else:
@@ -305,7 +313,8 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
                 utils.ui.echo(get_string("act_err_ksu").format(e=e))
                 utils.ui.echo(get_string("act_root_anyway"))
         else:
-            utils.ui.echo(get_string("act_skip_ksu"))
+            skip_key = "act_skip_sukisu" if is_sukisu else "act_skip_ksu"
+            utils.ui.echo(get_string(skip_key))
     
     utils.ui.echo(get_string("act_root_step2"))
     port = dev.setup_edl_connection()
