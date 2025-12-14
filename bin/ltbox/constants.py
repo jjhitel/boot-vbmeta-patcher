@@ -21,6 +21,7 @@ class LTBoxConfig:
         self.output_root_dir = self.base_dir / "output_root"
         self.output_root_lkm_dir = self.base_dir / "output_root_lkm"
         self.output_dp_dir = self.base_dir / "output_dp"
+        self.output_twrp_dir = self.base_dir / "output_twrp"
         self.backup_dir = self.base_dir / "backup"
         self.work_dir = self.base_dir / "patch_work"
         
@@ -51,6 +52,7 @@ class LTBoxConfig:
         self.fn_boot_root = "boot.root.img"
         self.fn_init_boot_root = "init_boot.root.img"
         self.fn_vbmeta_root = "vbmeta.root.img"
+        self.fn_twrp = "twrp.img"
 
         self.fn_vendor_boot_prc = "vendor_boot_prc.img"
 
@@ -219,6 +221,7 @@ OUTPUT_DIR = CONF.output_dir
 OUTPUT_ROOT_DIR = CONF.output_root_dir
 OUTPUT_ROOT_LKM_DIR = CONF.output_root_lkm_dir
 OUTPUT_DP_DIR = CONF.output_dp_dir
+OUTPUT_TWRP_DIR = CONF.output_twrp_dir
 BACKUP_DIR = CONF.backup_dir
 WORK_DIR = CONF.work_dir
 BACKUP_BOOT_DIR = CONF.backup_boot_dir
@@ -245,6 +248,7 @@ FN_VENDOR_BOOT_BAK = CONF.fn_vendor_boot_bak
 FN_BOOT_ROOT = CONF.fn_boot_root
 FN_INIT_BOOT_ROOT = CONF.fn_init_boot_root
 FN_VBMETA_ROOT = CONF.fn_vbmeta_root
+FN_TWRP = CONF.fn_twrp
 FN_VENDOR_BOOT_PRC = CONF.fn_vendor_boot_prc
 
 PYTHON_EXE = CONF.python_exe

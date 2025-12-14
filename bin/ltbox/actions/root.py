@@ -13,7 +13,7 @@ from ..errors import ToolError
 from ..partition import ensure_params_or_fail
 from .system import detect_active_slot_robust
 from ..patch.root import patch_boot_with_root_algo
-from ..patch.avb import process_boot_image_avb, extract_image_avb_info, rebuild_vbmeta_with_chained_images
+from ..patch.avb import process_boot_image_avb, extract_image_avb_info, rebuild_vbmeta_with_chained_images, _apply_hash_footer
 from ..i18n import get_string
 
 def _patch_lkm_via_app(
@@ -598,3 +598,107 @@ def unroot_device(dev: device.DeviceController) -> None:
         raise
 
     utils.ui.echo(get_string("act_unroot_finish"))
+
+def sign_and_flash_twrp(dev: device.DeviceController) -> None:
+    utils.ui.echo(get_string("act_start_rec_flash"))
+
+    twrp_name = const.FN_TWRP
+    out_dir = const.OUTPUT_TWRP_DIR
+    
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(exist_ok=True)
+
+    utils.check_dependencies()
+    edl.ensure_edl_requirements()
+
+    utils.ui.echo(get_string("act_wait_image"))
+    prompt = get_string("act_prompt_twrp").format(dir=const.IMAGE_DIR.name)
+    utils.wait_for_files(const.IMAGE_DIR, [twrp_name], prompt)
+    
+    twrp_src = const.IMAGE_DIR / twrp_name
+
+    utils.ui.echo(get_string("act_root_step1"))
+    if not dev.skip_adb:
+        dev.wait_for_adb()
+    
+    active_slot = detect_active_slot_robust(dev)
+    suffix = active_slot if active_slot else ""
+    target_partition = f"recovery{suffix}"
+
+    utils.ui.echo(get_string("act_root_step2"))
+    port = dev.setup_edl_connection()
+    try:
+        dev.load_firehose_programmer_with_stability(const.EDL_LOADER_FILE, port)
+    except Exception as e:
+        utils.ui.echo(get_string("act_warn_prog_load").format(e=e))
+
+    with utils.temporary_workspace(const.WORK_DIR):
+        dumped_recovery = const.WORK_DIR / f"recovery{suffix}.img"
+
+        utils.ui.echo(get_string("act_dump_recovery").format(part=target_partition))
+        try:
+            params = ensure_params_or_fail(target_partition)
+            dev.edl_read_partition(
+                port=port,
+                output_filename=str(dumped_recovery),
+                lun=params['lun'],
+                start_sector=params['start_sector'],
+                num_sectors=params['num_sectors']
+            )
+        except Exception as e:
+            utils.ui.error(get_string("act_err_dump").format(part=target_partition, e=e))
+            raise
+
+        backup_recovery = const.BACKUP_DIR / f"recovery{suffix}.img"
+        const.BACKUP_DIR.mkdir(exist_ok=True)
+        shutil.copy(dumped_recovery, backup_recovery)
+        utils.ui.echo(get_string("act_backup_recovery_ok"))
+
+        dev.edl_reset(port)
+
+        utils.ui.echo(get_string("act_sign_twrp_start"))
+        
+        rec_info = extract_image_avb_info(dumped_recovery)
+        
+        pubkey = rec_info.get('pubkey_sha1')
+        key_file = const.KEY_MAP.get(pubkey)
+        
+        if not key_file:
+             utils.ui.error(get_string("img_err_boot_key_mismatch").format(key=pubkey))
+             raise KeyError(f"Unknown key: {pubkey}")
+
+        final_twrp = out_dir / twrp_name
+        shutil.copy(twrp_src, final_twrp)
+        
+        subprocess.run(
+            [str(const.PYTHON_EXE), str(const.AVBTOOL_PY), "erase_footer", "--image", str(final_twrp)],
+            capture_output=True
+        )
+        
+        _apply_hash_footer(
+            image_path=final_twrp,
+            image_info=rec_info,
+            key_file=key_file
+        )
+        utils.ui.echo(get_string("act_sign_twrp_ok"))
+
+        utils.ui.echo(get_string("act_reboot_edl_flash"))
+        if not dev.skip_adb:
+            dev.wait_for_adb()
+            port = dev.setup_edl_connection()
+        else:
+             port = dev.wait_for_edl()
+
+        try:
+            dev.load_firehose_programmer_with_stability(const.EDL_LOADER_FILE, port)
+        except Exception:
+            pass
+
+        utils.ui.echo(get_string("act_flash_twrp").format(part=target_partition))
+        edl.flash_partition_target(dev, port, target_partition, final_twrp)
+
+        utils.ui.echo(get_string("act_reset_sys"))
+        dev.edl_reset(port)
+
+    utils.ui.echo(get_string("act_success"))

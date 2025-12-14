@@ -21,7 +21,8 @@ from .region import (
 from .root import (
     patch_root_image_file,
     root_device,
-    unroot_device
+    unroot_device,
+    sign_and_flash_twrp
 )
 
 from .system import (

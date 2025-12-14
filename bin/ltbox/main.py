@@ -471,7 +471,8 @@ def main_loop(device_controller_class, command_map):
         "2": ("patch_all", get_string("task_title_install_nowipe")),
         "3": ("disable_ota", get_string("task_title_disable_ota")),
         "4": ("rescue_ota", get_string("task_title_rescue")),
-        "6": ("unroot_device", get_string("task_title_unroot"))
+        "6": ("unroot_device", get_string("task_title_unroot")),
+        "7": ("sign_and_flash_twrp", get_string("task_title_rec_flash")) # [추가]
     }
 
     while True:
@@ -490,12 +491,13 @@ def main_loop(device_controller_class, command_map):
         menu.add_option("4", get_string("menu_main_rescue"))
         menu.add_option("5", get_string("menu_main_root"))
         menu.add_option("6", get_string("menu_main_unroot"))
+        menu.add_option("7", get_string("menu_main_rec_flash"))
         menu.add_separator()
         
         menu.add_label(get_string('menu_main_sub_settings'))
-        menu.add_option("7", get_string("menu_main_skip_adb").format(skip_adb_state=skip_adb_state))
-        menu.add_option("8", get_string("menu_main_skip_rb").format(skip_rb_state=skip_rb_state))
-        menu.add_option("9", get_string("menu_main_language"))
+        menu.add_option("8", get_string("menu_main_skip_adb").format(skip_adb_state=skip_adb_state))
+        menu.add_option("9", get_string("menu_main_skip_rb").format(skip_rb_state=skip_rb_state))
+        menu.add_option("10", get_string("menu_main_language"))
         menu.add_separator()
         
         menu.add_label(get_string('menu_main_sub_nav'))
@@ -512,12 +514,12 @@ def main_loop(device_controller_class, command_map):
             run_task(cmd, title, dev, command_map, extra_kwargs=extras)
         elif choice == "5":
             root_mode_selection_menu(dev, command_map)
-        elif choice == "7":
+        elif choice == "8":
             skip_adb = not skip_adb
             dev.skip_adb = skip_adb
-        elif choice == "8":
-            skip_rollback = not skip_rollback
         elif choice == "9":
+            skip_rollback = not skip_rollback
+        elif choice == "10":
             change_language_task()
         elif choice == "a":
             advanced_menu(dev, command_map)
@@ -562,6 +564,7 @@ def entry_point():
                 "root_device_lkm": (a.root_device, {"gki": False}),
                 "patch_root_image_file_lkm": (a.patch_root_image_file, {"gki": False}),
                 "unroot_device": (a.unroot_device, {}),
+                "sign_and_flash_twrp": (a.sign_and_flash_twrp, {}),
                 "disable_ota": (a.disable_ota, {}),
                 "rescue_ota": (a.rescue_after_ota, {}),
                 "edit_dp": (a.edit_devinfo_persist, {}),
