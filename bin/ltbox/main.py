@@ -369,7 +369,12 @@ def root_menu(dev, command_map, gki: bool):
             menu.add_option("2", get_string("menu_root_2_gki"))
         else:
             menu.add_option("1", get_string("menu_root_1_lkm"))
-            menu.add_option("2", get_string("menu_root_2_lkm"))
+            
+            label_2 = get_string("menu_root_2_lkm")
+            if root_type == "sukisu":
+                label_2 = label_2.replace("KernelSU Next", "Sukisu Ultra")
+            
+            menu.add_option("2", label_2)
         
         menu.add_separator()
         menu.add_option("m", get_string("menu_root_m"))
