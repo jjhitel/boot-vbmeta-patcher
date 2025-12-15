@@ -58,17 +58,17 @@ def _dump_images(ctx: TaskContext) -> Tuple[bool, str, str]:
     suffix = ctx.active_slot_suffix if ctx.active_slot_suffix else ""
     boot_target = f"boot{suffix}"
     vbmeta_target = f"vbmeta_system{suffix}"
-    
     extra_dumps = []
     if not ctx.skip_rollback:
         extra_dumps = [boot_target, vbmeta_target]
-        
-    actions.dump_partitions(
-        dev=ctx.dev,
-        skip_reset=False, 
-        additional_targets=extra_dumps,
-        skip_dp=skip_dp_workflow
-    )
+
+    if (not skip_dp_workflow) or extra_dumps:
+        actions.dump_partitions(
+            dev=ctx.dev,
+            skip_reset=False, 
+            additional_targets=extra_dumps,
+            default_targets=not skip_dp_workflow
+        )
 
     return skip_dp_workflow, boot_target, vbmeta_target
 
