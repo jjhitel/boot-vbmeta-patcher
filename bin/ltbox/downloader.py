@@ -324,7 +324,7 @@ def download_ksuinit(target_path: Path) -> None:
     if target_path.exists():
         target_path.unlink()
     
-    url = f"https://github.com/{const.KSU_APK_REPO}/raw/refs/tags/{const.KSU_APK_TAG}/userspace/ksud_magic/bin/aarch64/ksuinit"
+    url = f"https://github.com/{const.KSU_APK_REPO}/raw/refs/tags/{const.KSU_APK_TAG}/userspace/ksud/bin/aarch64/ksuinit"
     
     import requests
     from requests.exceptions import RequestException
