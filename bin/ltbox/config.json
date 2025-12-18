@@ -10,10 +10,10 @@
   },
   "kernelsu-next": {
     "apk_repo": "KernelSU-Next/KernelSU-Next",
-    "apk_tag": "v1.1.1",
+    "apk_tag": "v3.0.0",
     "release_owner": "WildKernels",
     "release_repo": "GKI_KernelSU_SUSFS",
-    "release_tag": "v1.5.12-r16",
+    "release_tag": "v1.5.12-r19",
     "anykernel_zip": "AnyKernel3.zip"
   },
   "sukisu-ultra": {
