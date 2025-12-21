@@ -86,8 +86,8 @@ def _patch_country_code_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dic
     target_string = f"00{current_code.upper()}XX00"
     target_bytes = b'\x00' + f"{current_code.upper()}".encode('ascii') + b'XX\x00'
     
-    replacement_string = f"000000{replacement_code.upper()}XX000000"
-    replacement_bytes = b'\x00\x00\x00' + f"{replacement_code.upper()}".encode('ascii') + b'XX\x00\x00\x00'
+    replacement_string = f"00{replacement_code.upper()}XX00"
+    replacement_bytes = b'\x00' + f"{replacement_code.upper()}".encode('ascii') + b'XX\x00'
 
     if target_bytes == replacement_bytes:
         return content, {'changed': False, 'message': get_string("img_code_already").format(code=replacement_code.upper())}
