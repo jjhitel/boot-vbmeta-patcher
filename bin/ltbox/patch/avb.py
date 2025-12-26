@@ -72,7 +72,7 @@ def extract_image_avb_info(image_path: Path) -> Dict[str, Any]:
 def _apply_hash_footer(
     image_path: Path, 
     image_info: Dict[str, Any], 
-    key_file: Path, 
+    key_file: Optional[Path], 
     new_rollback_index: Optional[str] = None
 ) -> None:
     rollback_index = new_rollback_index if new_rollback_index is not None else image_info['rollback']
@@ -83,7 +83,6 @@ def _apply_hash_footer(
     add_footer_cmd = [
         str(const.PYTHON_EXE), str(const.AVBTOOL_PY), "add_hash_footer",
         "--image", str(image_path), 
-        "--key", str(key_file),
         "--algorithm", image_info['algorithm'], 
         "--partition_size", image_info['partition_size'],
         "--partition_name", image_info['name'], 
@@ -91,6 +90,9 @@ def _apply_hash_footer(
         "--salt", image_info['salt'], 
         *image_info.get('props_args', [])
     ]
+
+    if key_file:
+        add_footer_cmd.extend(["--key", str(key_file)])
     
     if 'flags' in image_info:
         add_footer_cmd.extend(["--flags", image_info.get('flags', '0')])
@@ -118,13 +120,15 @@ def patch_chained_image_rollback(
 
         utils.ui.info(get_string("img_patch_bypass").format(name=image_name, old=new_rb_index, new=current_rb_index))
         
-        for key in ['partition_size', 'name', 'salt', 'algorithm', 'pubkey_sha1']:
+        for key in ['partition_size', 'name', 'salt', 'algorithm']:
             if key not in info:
                 raise KeyError(get_string("img_err_missing_key").format(key=key, name=new_image_path.name))
         
-        key_file = const.KEY_MAP.get(info['pubkey_sha1']) 
-        if not key_file:
-            raise KeyError(get_string("img_err_unknown_key").format(key=info['pubkey_sha1'], name=new_image_path.name))
+        key_file = None
+        if 'pubkey_sha1' in info:
+            key_file = const.KEY_MAP.get(info['pubkey_sha1']) 
+            if not key_file:
+                raise KeyError(get_string("img_err_unknown_key").format(key=info['pubkey_sha1'], name=new_image_path.name))
         
         shutil.copy(new_image_path, patched_image_path)
         
@@ -195,11 +199,9 @@ def process_boot_image_avb(image_to_process: Path, gki: bool = False) -> None:
         
     utils.ui.info(get_string("img_avb_extract_info").format(name=boot_bak_img.name))
     boot_info = extract_image_avb_info(boot_bak_img)
-    
+
     required_keys = ['partition_size', 'name', 'rollback', 'salt', 'algorithm']
-    if gki:
-        required_keys.append('pubkey_sha1')
-        
+    
     for key in required_keys:
         if key not in boot_info:
             if key == 'partition_size' and 'data_size' in boot_info:
@@ -220,13 +222,18 @@ def process_boot_image_avb(image_to_process: Path, gki: bool = False) -> None:
             
     if gki:
         boot_pubkey = boot_info.get('pubkey_sha1')
-        key_file = const.KEY_MAP.get(boot_pubkey) 
+        key_file = None
         
-        if not key_file:
-            utils.ui.error(get_string("img_err_boot_key_mismatch").format(key=boot_pubkey))
-            raise KeyError(get_string("img_err_boot_key_mismatch").format(key=boot_pubkey))
+        if boot_pubkey:
+            key_file = const.KEY_MAP.get(boot_pubkey) 
+            
+            if not key_file:
+                utils.ui.error(get_string("img_err_boot_key_mismatch").format(key=boot_pubkey))
+                raise KeyError(get_string("img_err_boot_key_mismatch").format(key=boot_pubkey))
 
-        utils.ui.info(get_string("img_key_matched").format(name=key_file.name))
+            utils.ui.info(get_string("img_key_matched").format(name=key_file.name))
+        else:
+            utils.ui.info("No signature key found. Applying original footer (Unsigned).")
         
         _apply_hash_footer(
             image_path=image_to_process,
