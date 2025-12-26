@@ -30,6 +30,7 @@ def _prepare_edl_session(dev: device.DeviceController) -> str:
     
     try:
         dev.load_firehose_programmer_with_stability(const.EDL_LOADER_FILE, port)
+        dev.configure_edl_storage(port)
     except Exception as e:
         utils.ui.echo(get_string("act_warn_prog_load").format(e=e))
         

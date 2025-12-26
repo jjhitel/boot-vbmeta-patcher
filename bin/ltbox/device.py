@@ -238,6 +238,73 @@ class FastbootManager:
             raise DeviceCommandError(get_string("device_err_reboot").format(e=e), e)
 
 class EdlManager:
+    def configure_storage(self, port: str, memory_type: str = "ufs") -> None:
+        if not const.EDL_EXE.exists():
+            raise FileNotFoundError(get_string("device_err_fh_missing").format(path=const.EDL_EXE))
+
+        xml_content = (
+            f'<?xml version="1.0" encoding="UTF-8" ?>'
+            f'<data>'
+            f'<configure MemoryName="{memory_type}" '
+            f'Verbose="0" '
+            f'AlwaysValidate="0" '
+            f'MaxDigestTableSizeInBytes="8192" '
+            f'MaxPayloadSizeToTargetInBytes="1048576" '
+            f'ZlpAwareHost="1" '
+            f'SkipStorageInit="0" />'
+            f'</data>'
+        )
+        
+        temp_xml = Path("configure.xml")
+        
+        try:
+            with open(temp_xml, "w") as f:
+                f.write(xml_content)
+
+            port_str = f"\\\\.\\{port}"
+            cmd_fh = [
+                str(const.EDL_EXE),
+                f"--port={port_str}",
+                f"--configure={temp_xml.name}",
+                "--noprompt"
+            ]
+            
+            utils.run_command(cmd_fh)
+            ui.info("Storage configuration complete.")
+            
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            raise DeviceCommandError(f"Failed to configure storage: {e}", e)
+        finally:
+            if temp_xml.exists():
+                temp_xml.unlink()
+
+    def reset_to_edl(self, port: str) -> None:
+        if not const.EDL_EXE.exists():
+            raise FileNotFoundError(get_string("device_err_fh_missing").format(path=const.EDL_EXE))
+
+        temp_xml = Path("reset_edl.xml")
+        
+        try:
+            with open(temp_xml, "w") as f:
+                f.write('<?xml version="1.0" ?><data><power value="reset_to_edl" /></data>')
+
+            port_str = f"\\\\.\\{port}"
+            cmd_fh = [
+                str(const.EDL_EXE),
+                f"--port={port_str}",
+                f"--sendxml={temp_xml.name}",
+                "--noprompt",
+                "--skip_configure"
+            ]
+            
+            utils.run_command(cmd_fh)
+            
+        except Exception:
+            pass
+        finally:
+            if temp_xml.exists():
+                temp_xml.unlink()
+
     def check_device(self, silent: bool = False) -> Optional[str]:
         if not silent:
             ui.info(get_string("device_check_edl"))
@@ -328,7 +395,7 @@ class EdlManager:
             f"--num_sectors={num_sectors}",
             f"--memoryname={memory_name}",
             "--noprompt",
-            "--zlpawarehost=1"
+            "--skip_configure"
         ]
         
         try:
@@ -354,7 +421,7 @@ class EdlManager:
             f"--start_sector={start_sector}",
             f"--memoryname={memory_name}",
             "--noprompt",
-            "--zlpawarehost=1"
+            "--skip_configure"
         ]
         
         try:
@@ -404,8 +471,8 @@ class EdlManager:
             "--setactivepartition=1",
             f"--memoryname={memory_type}",
             "--showpercentagecomplete",
-            "--zlpawarehost=1",
-            "--noprompt"
+            "--noprompt",
+            "--skip_configure"
         ]
         
         try:
@@ -485,7 +552,13 @@ class DeviceController:
         return self.adb.get_kernel_version()
 
     def reboot_to_edl(self) -> None:
-        self.adb.reboot("edl")
+        port = self.edl.check_device(silent=True)
+        if port:
+            ui.info(get_string("device_resetting")) 
+            self.edl.reset_to_edl(port)
+            time.sleep(2)
+        else:
+            self.adb.reboot("edl")
 
     def reboot_to_bootloader(self) -> None:
         self.adb.reboot("bootloader")
@@ -549,3 +622,9 @@ class DeviceController:
 
     def edl_rawprogram(self, loader_path: Path, memory_type: str, raw_xmls: List[Path], patch_xmls: List[Path], port: str) -> None:
         self.edl.flash_rawprogram(port, loader_path, memory_type, raw_xmls, patch_xmls)
+
+    def configure_edl_storage(self, port: str, memory_type: str = "ufs") -> None:
+        self.edl.configure_storage(port, memory_type)
+
+    def edl_reset_to_edl(self, port: str) -> None:
+        self.edl.reset_to_edl(port)
