@@ -134,27 +134,6 @@ class LTBoxConfig:
         return self._get_val("kernelsu-next", "anykernel_zip")
 
     @property
-    def sukisu_manager_url(self) -> str:
-        return f"https://nightly.link/{self.sukisu_repo}/actions/runs/{self.sukisu_workflow}/Spoofed-Manager.zip"
-
-    def get_sukisu_lkm_url(self, kernel_mapped_name: str) -> str:
-        return f"https://nightly.link/{self.sukisu_repo}/actions/runs/{self.sukisu_workflow}/{identifier}-lkm.zip"
-
-    @property
-    def sukisu_ksuinit_url(self) -> str:
-        return f"https://nightly.link/{self.sukisu_repo}/actions/runs/{self.sukisu_workflow}/ksuinit-aarch64-linux-android.zip"
-
-    @property
-    def kernel_android_map(self) -> Dict[str, str]:
-        return {
-            "5.10": "android13",
-            "5.15": "android14",
-            "6.1": "android14",
-            "6.6": "android15",
-            "6.12": "android16"
-        }
-
-    @property
     def edl_loader_filename(self) -> str:
         return self._get_val("edl", "loader_filename")
 
