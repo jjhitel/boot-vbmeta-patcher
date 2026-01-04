@@ -244,7 +244,6 @@ try:
     KSU_APK_TAG = CONF.ksu_apk_tag
     SUKISU_REPO = CONF.sukisu_repo
     SUKISU_WORKFLOW = CONF.sukisu_workflow
-    KERNEL_ANDROID_MAP = CONF.kernel_android_map
     RELEASE_OWNER = CONF.release_owner
     RELEASE_REPO = CONF.release_repo
     RELEASE_TAG = CONF.release_tag
