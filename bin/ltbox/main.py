@@ -5,7 +5,7 @@ import sys
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Tuple, Dict, Callable, Any, List
+from typing import Tuple, Dict, Callable, Any, List, Optional
 
 from . import downloader, i18n
 from .i18n import get_string
@@ -25,7 +25,31 @@ except ImportError:
     input(get_string("press_enter_to_exit"))
     sys.exit(1)
 
+# --- Command Registry ---
+
+class CommandRegistry:
+    def __init__(self):
+        self._commands: Dict[str, Dict[str, Any]] = {}
+
+    def register(self, name: str, title: str, require_dev: bool = True, **default_kwargs):
+        def decorator(func: Callable):
+            self._commands[name] = {
+                "func": func,
+                "title": title,
+                "require_dev": require_dev,
+                "default_kwargs": default_kwargs
+            }
+            return func
+        return decorator
+
+    def add(self, name: str, func: Callable, title: str, require_dev: bool = True, **default_kwargs):
+        self.register(name, title, require_dev, **default_kwargs)(func)
+
+    def get(self, name: str) -> Optional[Dict[str, Any]]:
+        return self._commands.get(name)
+
 # --- UI Helper Class ---
+
 class TerminalMenu:
     def __init__(self, title: str):
         self.title = title
@@ -140,32 +164,29 @@ def check_path_encoding():
 
 # --- Task Execution ---
 
-def run_task(command, title, dev, command_map, extra_kwargs=None):
+def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Dict[str, Any] = None):
     ui.clear()
     
+    cmd_info = registry.get(command)
+    if not cmd_info:
+        raise ToolError(get_string("unknown_command").format(command=command))
+
+    title = cmd_info["title"]
+    func = cmd_info["func"]
+    base_kwargs = cmd_info["default_kwargs"]
+    require_dev = cmd_info["require_dev"]
+
     ui.echo("=" * 78)
     ui.echo(get_string("starting_task").format(title=title))
     ui.echo("=" * 78 + "\n")
 
     try:
-        func_tuple = command_map.get(command)
-        if not func_tuple:
-            raise ToolError(get_string("unknown_command").format(command=command))
-        
-        func, base_kwargs = func_tuple
         final_kwargs = base_kwargs.copy()
         
         if extra_kwargs:
             final_kwargs.update(extra_kwargs)
         
-        no_dev_needed = {
-            "patch_root_image_file_gki", "patch_root_image_file_lkm", 
-            "edit_dp", 
-            "patch_anti_rollback", "clean", "modify_xml", "modify_xml_wipe",
-            "decrypt_xml", "change_language"
-        }
-        
-        if command not in no_dev_needed:
+        if require_dev:
             final_kwargs["dev"] = dev
 
         result = func(**final_kwargs)
@@ -266,20 +287,20 @@ def run_info_scan(paths, constants, avb_patch):
 
 # --- Menus ---
 
-def advanced_menu(dev, command_map):
+def advanced_menu(dev, registry: CommandRegistry):
     actions_map = {
-        "1": ("convert", get_string("task_title_convert_rom")),
-        "2": ("dump_partitions", get_string("task_title_dump_devinfo")),
-        "3": ("edit_dp", get_string("task_title_patch_devinfo")),
-        "4": ("flash_partitions", get_string("task_title_write_devinfo")),
-        "5": ("read_anti_rollback", get_string("task_title_read_arb")),
-        "6": ("patch_anti_rollback", get_string("task_title_patch_arb")),
-        "7": ("write_anti_rollback", get_string("task_title_write_arb")),
-        "8": ("decrypt_xml", get_string("task_title_decrypt_xml")),
-        "9": ("modify_xml_wipe", get_string("task_title_modify_xml_wipe")),
-        "10": ("modify_xml", get_string("task_title_modify_xml_nowipe")),
-        "11": ("flash_full_firmware", get_string("task_title_flash_full_firmware")),
-        "12": ("clean", get_string("task_title_clean"))
+        "1": "convert",
+        "2": "dump_partitions",
+        "3": "edit_dp",
+        "4": "flash_partitions",
+        "5": "read_anti_rollback",
+        "6": "patch_anti_rollback",
+        "7": "write_anti_rollback",
+        "8": "decrypt_xml",
+        "9": "modify_xml_wipe",
+        "10": "modify_xml",
+        "11": "flash_full_firmware",
+        "12": "clean"
     }
 
     while True:
@@ -319,16 +340,16 @@ def advanced_menu(dev, command_map):
         choice = menu.ask(get_string("menu_adv_prompt"), get_string("menu_adv_invalid"))
 
         if choice in actions_map:
-            cmd, title = actions_map[choice]
-            run_task(cmd, title, dev, command_map)
-            if choice == "12": # Clean exits
+            cmd = actions_map[choice]
+            run_task(cmd, dev, registry)
+            if choice == "12":
                 sys.exit()
         elif choice == "m":
             return
         elif choice == "x":
             sys.exit()
 
-def root_menu(dev, command_map, gki: bool):
+def root_menu(dev, registry: CommandRegistry, gki: bool):
     root_type = "ksu"
     
     if not gki:
@@ -352,14 +373,13 @@ def root_menu(dev, command_map, gki: bool):
 
     if gki:
         actions_map = {
-            "1": ("root_device_gki", get_string("task_title_root_gki")),
-            "2": ("patch_root_image_file_gki", get_string("task_title_root_file_gki")),
+            "1": "root_device_gki",
+            "2": "patch_root_image_file_gki",
         }
     else:
-        title_suffix = " (SukiSU Ultra)" if root_type == "sukisu" else " (KernelSU Next)"
         actions_map = {
-            "1": ("root_device_lkm", get_string("task_title_root_lkm") + title_suffix),
-            "2": ("patch_root_image_file_lkm", get_string("task_title_root_file_lkm") + title_suffix),
+            "1": "root_device_lkm",
+            "2": "patch_root_image_file_lkm",
         }
 
     while True:
@@ -383,17 +403,17 @@ def root_menu(dev, command_map, gki: bool):
         choice = menu.ask(get_string("menu_root_prompt"), get_string("menu_root_invalid"))
 
         if choice in actions_map:
-            cmd, title = actions_map[choice]
+            cmd = actions_map[choice]
             extras = {}
             if not gki:
                 extras["root_type"] = root_type
-            run_task(cmd, title, dev, command_map, extra_kwargs=extras)
+            run_task(cmd, dev, registry, extra_kwargs=extras)
         elif choice == "m":
             return
         elif choice == "x":
             sys.exit()
 
-def root_mode_selection_menu(dev, command_map):
+def root_mode_selection_menu(dev, registry: CommandRegistry):
     while True:
         menu = TerminalMenu(get_string("menu_root_mode_title"))
         menu.add_option("1", get_string("menu_root_mode_1"))
@@ -406,9 +426,9 @@ def root_mode_selection_menu(dev, command_map):
         choice = menu.ask(get_string("menu_root_mode_prompt"), get_string("menu_root_mode_invalid"))
 
         if choice == "1":
-            root_menu(dev, command_map, gki=False)
+            root_menu(dev, registry, gki=False)
         elif choice == "2":
-            root_menu(dev, command_map, gki=True)
+            root_menu(dev, registry, gki=True)
         elif choice == "m":
             return
         elif choice == "x":
@@ -456,23 +476,18 @@ def prompt_for_language(force_prompt: bool = False) -> str:
     
     return selected_lang
 
-def change_language_task():
-    new_lang = prompt_for_language(force_prompt=True)
-    i18n.load_lang(new_lang)
-    return get_string("lang_changed")
-
-def main_loop(device_controller_class, command_map):
+def main_loop(device_controller_class, registry: CommandRegistry):
     skip_adb = False
     skip_rollback = False
     dev = device_controller_class(skip_adb=skip_adb)
     
     actions_map = {
-        "1": ("patch_all_wipe", get_string("task_title_install_wipe")),
-        "2": ("patch_all", get_string("task_title_install_nowipe")),
-        "3": ("disable_ota", get_string("task_title_disable_ota")),
-        "4": ("rescue_ota", get_string("task_title_rescue")),
-        "6": ("unroot_device", get_string("task_title_unroot")),
-        "7": ("sign_and_flash_twrp", get_string("task_title_rec_flash")) # [추가]
+        "1": "patch_all_wipe",
+        "2": "patch_all",
+        "3": "disable_ota",
+        "4": "rescue_ota",
+        "6": "unroot_device",
+        "7": "sign_and_flash_twrp"
     }
 
     while True:
@@ -507,22 +522,22 @@ def main_loop(device_controller_class, command_map):
         choice = menu.ask(get_string("menu_main_prompt"), get_string("menu_main_invalid"))
 
         if choice in actions_map:
-            cmd, title = actions_map[choice]
+            cmd = actions_map[choice]
             extras = {}
             if cmd in ["patch_all", "patch_all_wipe"]:
                 extras["skip_rollback"] = skip_rollback
-            run_task(cmd, title, dev, command_map, extra_kwargs=extras)
+            run_task(cmd, dev, registry, extra_kwargs=extras)
         elif choice == "5":
-            root_mode_selection_menu(dev, command_map)
+            root_mode_selection_menu(dev, registry)
         elif choice == "8":
             skip_adb = not skip_adb
             dev.skip_adb = skip_adb
         elif choice == "9":
             skip_rollback = not skip_rollback
         elif choice == "10":
-            change_language_task()
+            registry.get("change_language")["func"]()
         elif choice == "a":
-            advanced_menu(dev, command_map)
+            advanced_menu(dev, registry)
         elif choice == "x":
             break
 
@@ -557,32 +572,37 @@ def entry_point():
             from . import constants as c
             from .patch import avb as avb
 
-            COMMAND_MAP: Dict[str, Tuple[Callable[..., Any], Dict[str, Any]]] = {
-                "convert": (a.convert_region_images, {}),
-                "root_device_gki": (a.root_device, {"gki": True}),
-                "patch_root_image_file_gki": (a.patch_root_image_file, {"gki": True}),
-                "root_device_lkm": (a.root_device, {"gki": False}),
-                "patch_root_image_file_lkm": (a.patch_root_image_file, {"gki": False}),
-                "unroot_device": (a.unroot_device, {}),
-                "sign_and_flash_twrp": (a.sign_and_flash_twrp, {}),
-                "disable_ota": (a.disable_ota, {}),
-                "rescue_ota": (a.rescue_after_ota, {}),
-                "edit_dp": (a.edit_devinfo_persist, {}),
-                "dump_partitions": (a.dump_partitions, {}),
-                "flash_partitions": (a.flash_partitions, {}),
-                "read_anti_rollback": (a.read_anti_rollback_from_device, {}),
-                "patch_anti_rollback": (a.patch_anti_rollback_in_rom, {}),
-                "write_anti_rollback": (a.write_anti_rollback, {}),
-                "clean": (u.clean_workspace, {}),
-                "decrypt_xml": (a.decrypt_x_files, {}),
-                "modify_xml": (a.modify_xml, {"wipe": 0}),
-                "modify_xml_wipe": (a.modify_xml, {"wipe": 1}),
-                "flash_full_firmware": (a.flash_full_firmware, {}),
-                "patch_all": (w.patch_all, {"wipe": 0}),
-                "patch_all_wipe": (w.patch_all, {"wipe": 1}),
-                "change_language": (change_language_task, {}),
-            }
-            
+            registry = CommandRegistry()
+
+            @registry.register("change_language", get_string("lang_changed"), require_dev=False)
+            def change_language_task():
+                new_lang = prompt_for_language(force_prompt=True)
+                i18n.load_lang(new_lang)
+                return get_string("lang_changed")
+
+            registry.add("convert", a.convert_region_images, get_string("task_title_convert_rom"), require_dev=True)
+            registry.add("root_device_gki", a.root_device, get_string("task_title_root_gki"), require_dev=True, gki=True)
+            registry.add("patch_root_image_file_gki", a.patch_root_image_file, get_string("task_title_root_file_gki"), require_dev=False, gki=True)
+            registry.add("root_device_lkm", a.root_device, get_string("task_title_root_lkm"), require_dev=True, gki=False)
+            registry.add("patch_root_image_file_lkm", a.patch_root_image_file, get_string("task_title_root_file_lkm"), require_dev=False, gki=False)
+            registry.add("unroot_device", a.unroot_device, get_string("task_title_unroot"), require_dev=True)
+            registry.add("sign_and_flash_twrp", a.sign_and_flash_twrp, get_string("task_title_rec_flash"), require_dev=True)
+            registry.add("disable_ota", a.disable_ota, get_string("task_title_disable_ota"), require_dev=True)
+            registry.add("rescue_ota", a.rescue_after_ota, get_string("task_title_rescue"), require_dev=True)
+            registry.add("edit_dp", a.edit_devinfo_persist, get_string("task_title_patch_devinfo"), require_dev=False)
+            registry.add("dump_partitions", a.dump_partitions, get_string("task_title_dump_devinfo"), require_dev=True)
+            registry.add("flash_partitions", a.flash_partitions, get_string("task_title_write_devinfo"), require_dev=True)
+            registry.add("read_anti_rollback", a.read_anti_rollback_from_device, get_string("task_title_read_arb"), require_dev=True)
+            registry.add("patch_anti_rollback", a.patch_anti_rollback_in_rom, get_string("task_title_patch_arb"), require_dev=False)
+            registry.add("write_anti_rollback", a.write_anti_rollback, get_string("task_title_write_arb"), require_dev=True)
+            registry.add("clean", u.clean_workspace, get_string("task_title_clean"), require_dev=False)
+            registry.add("decrypt_xml", a.decrypt_x_files, get_string("task_title_decrypt_xml"), require_dev=False)
+            registry.add("modify_xml", a.modify_xml, get_string("task_title_modify_xml_nowipe"), require_dev=False, wipe=0)
+            registry.add("modify_xml_wipe", a.modify_xml, get_string("task_title_modify_xml_wipe"), require_dev=False, wipe=1)
+            registry.add("flash_full_firmware", a.flash_full_firmware, get_string("task_title_flash_full_firmware"), require_dev=True)
+            registry.add("patch_all", w.patch_all, get_string("task_title_install_nowipe"), require_dev=True, wipe=0)
+            registry.add("patch_all_wipe", w.patch_all, get_string("task_title_install_wipe"), require_dev=True, wipe=1)
+
             device_controller_class = d.DeviceController
             constants_module = c
             avb_patch_module = avb
@@ -605,7 +625,7 @@ def entry_point():
             
             input(get_string("press_enter_to_exit"))
         else:
-            main_loop(device_controller_class, COMMAND_MAP)
+            main_loop(device_controller_class, registry)
 
     except (LTBoxError, RuntimeError) as e:
         ui.error(get_string("err_fatal_abort"))
