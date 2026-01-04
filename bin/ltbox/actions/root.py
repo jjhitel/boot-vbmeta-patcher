@@ -1,9 +1,9 @@
 import os
 import shutil
 import subprocess
-import sys
+from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
 
 from . import edl
 from .. import constants as const
@@ -13,232 +13,302 @@ from ..errors import ToolError
 from ..partition import ensure_params_or_fail
 from .system import detect_active_slot_robust
 from ..patch.root import patch_boot_with_root_algo
-from ..patch.avb import process_boot_image_avb, extract_image_avb_info, rebuild_vbmeta_with_chained_images, _apply_hash_footer
+from ..patch.avb import process_boot_image_avb, rebuild_vbmeta_with_chained_images
 from ..i18n import get_string
 
-def _prepare_and_find_manager_apks(root_type: str) -> list[Path]:
-    is_sukisu = (root_type == "sukisu")
-    
-    if is_sukisu:
-        downloader.download_sukisu_manager(const.BASE_DIR)
-        return [f for f in const.BASE_DIR.glob("*.apk") if f.name.lower().startswith("sukisu")]
-    else:
-        downloader.download_ksu_apk(const.BASE_DIR)
-        ksu_apks = [
-            f for f in const.BASE_DIR.glob("*.apk")
-            if (f.name.lower().startswith("kernelsu_next") or ("spoofed" in f.name.lower() and "kernelsu" in f.name.lower()))
-            and not f.name.lower().startswith("sukisu")
-        ]
+class RootStrategy(ABC):
+    @property
+    @abstractmethod
+    def image_name(self) -> str: pass
+
+    @property
+    @abstractmethod
+    def backup_name(self) -> str: pass
+
+    @property
+    @abstractmethod
+    def output_dir(self) -> Path: pass
+
+    @property
+    @abstractmethod
+    def backup_dir(self) -> Path: pass
+
+    @property
+    @abstractmethod
+    def required_files(self) -> List[str]: pass
+
+    @property
+    @abstractmethod
+    def log_output_dir_name(self) -> str: pass
+
+    @abstractmethod
+    def get_partition_map(self, suffix: str) -> Dict[str, str]: pass
+
+    @abstractmethod
+    def patch(self, work_dir: Path, dev: Optional[device.DeviceController] = None, lkm_kernel_version: Optional[str] = None) -> Path: pass
+
+    @abstractmethod
+    def finalize_patch(self, patched_boot: Path, output_dir: Path, backup_source_dir: Path) -> Path: pass
+
+class GkiRootStrategy(RootStrategy):
+    @property
+    def image_name(self) -> str:
+        return const.FN_BOOT
+
+    @property
+    def backup_name(self) -> str:
+        return const.FN_BOOT_BAK
+
+    @property
+    def output_dir(self) -> Path:
+        return const.OUTPUT_ROOT_DIR
+
+    @property
+    def backup_dir(self) -> Path:
+        return const.BACKUP_BOOT_DIR
+
+    @property
+    def required_files(self) -> List[str]:
+        return [self.image_name]
+
+    @property
+    def log_output_dir_name(self) -> str:
+        return const.OUTPUT_ROOT_DIR.name
+
+    def get_partition_map(self, suffix: str) -> Dict[str, str]:
+        return {
+            "main": f"boot{suffix}",
+            "vbmeta": ""
+        }
+
+    def patch(self, work_dir: Path, dev: Optional[device.DeviceController] = None, lkm_kernel_version: Optional[str] = None) -> Path:
+        magiskboot_exe = utils.get_platform_executable("magiskboot")
+        ensure_magiskboot()
+        return patch_boot_with_root_algo(work_dir, magiskboot_exe, dev=None, gki=True)
+
+    def finalize_patch(self, patched_boot: Path, output_dir: Path, backup_source_dir: Path) -> Path:
+        process_boot_image_avb(patched_boot, gki=True)
+        final_boot = output_dir / self.image_name
+        shutil.move(patched_boot, final_boot)
+        return final_boot
+
+class LkmRootStrategy(RootStrategy):
+    def __init__(self, root_type: str = "ksu"):
+        self.root_type = root_type
+
+    @property
+    def image_name(self) -> str:
+        return const.FN_INIT_BOOT
+
+    @property
+    def backup_name(self) -> str:
+        return const.FN_INIT_BOOT_BAK
+
+    @property
+    def output_dir(self) -> Path:
+        return const.OUTPUT_ROOT_LKM_DIR
+
+    @property
+    def backup_dir(self) -> Path:
+        return const.BACKUP_INIT_BOOT_DIR
+
+    @property
+    def required_files(self) -> List[str]:
+        return [self.image_name, const.FN_VBMETA]
+
+    @property
+    def log_output_dir_name(self) -> str:
+        return const.OUTPUT_ROOT_LKM_DIR.name
+
+    def get_partition_map(self, suffix: str) -> Dict[str, str]:
+        return {
+            "main": f"init_boot{suffix}",
+            "vbmeta": f"vbmeta{suffix}"
+        }
+
+    def patch(self, work_dir: Path, dev: Optional[device.DeviceController] = None, lkm_kernel_version: Optional[str] = None) -> Path:
+        if not dev:
+            raise ToolError(get_string("act_root_err_lkm_skip_adb"))
         
-        if not ksu_apks:
-            candidates = list(const.BASE_DIR.glob("*.apk"))
-            ksu_apks = [f for f in candidates if not f.name.lower().startswith("sukisu")]
+        return self._patch_via_app(dev, work_dir, self.image_name)
+
+    def finalize_patch(self, patched_boot: Path, output_dir: Path, backup_source_dir: Path) -> Path:
+        process_boot_image_avb(patched_boot, gki=False)
+        
+        vbmeta_bak = backup_source_dir / const.FN_VBMETA_BAK
+        patched_vbmeta_path = const.BASE_DIR / const.FN_VBMETA_ROOT
+        
+        rebuild_vbmeta_with_chained_images(
+            output_path=patched_vbmeta_path,
+            original_vbmeta_path=vbmeta_bak,
+            chained_images=[patched_boot]
+        )
+        
+        final_boot = output_dir / self.image_name
+        shutil.move(patched_boot, final_boot)
+        
+        if patched_vbmeta_path.exists():
+            shutil.move(patched_vbmeta_path, output_dir / const.FN_VBMETA)
             
-        return ksu_apks
+        return final_boot
 
-def _patch_lkm_via_app(
-    dev: device.DeviceController,
-    work_dir: Path,
-    img_name: str,
-    root_type: str = "ksu"
-) -> Optional[Path]:
-    is_sukisu = (root_type == "sukisu")
-
-    check_msg = get_string("act_check_ksu")
-    if is_sukisu:
-        check_msg = check_msg.replace("KernelSU Next", "SukiSU Ultra")
-    utils.ui.echo(check_msg)
-
-    ksu_apks = _prepare_and_find_manager_apks(root_type)
-
-    if not ksu_apks:
-        skip_key = "act_skip_ksu"
-        skip_msg = get_string(skip_key)
+    def _prepare_and_find_manager_apks(self) -> List[Path]:
+        is_sukisu = (self.root_type == "sukisu")
         if is_sukisu:
-            skip_msg = skip_msg.replace("KernelSU Next", "SukiSU Ultra")
-        utils.ui.echo(skip_msg)
-        return None
-    
-    apk_path = ksu_apks[0]
-    utils.ui.echo(get_string("act_install_ksu").format(name=apk_path.name))
-    try:
-        dev.install_apk(str(apk_path))
-        utils.ui.echo(get_string("act_ksu_ok"))
-    except Exception as e:
-        utils.ui.echo(get_string("act_err_ksu").format(e=e))
-        utils.ui.echo(get_string("act_root_anyway"))
-    
-    utils.ui.echo(get_string("act_push_init_boot"))
-    local_img_path = work_dir / img_name
-    remote_img_path = f"/sdcard/{img_name}"
-    try:
-        dev.push_file(str(local_img_path), remote_img_path)
-    except Exception as e:
-        utils.ui.echo(get_string("act_err_push_init_boot").format(e=e))
-        return None
-
-    prompt_key = "act_prompt_patch_app_sukisu" if is_sukisu else "act_prompt_patch_app"
-    utils.ui.echo(get_string(prompt_key))
-    utils.ui.echo(get_string("press_enter_to_continue"))
-    try:
-        utils.ui.prompt()
-    except EOFError:
-        raise RuntimeError(get_string('act_op_cancel'))
-    
-    utils.ui.echo(get_string("act_find_patched_file"))
-    try:
-        if is_sukisu:
-             cmd_output = dev.adb_shell("ls -t /sdcard/Download/kernelsu_patched_*.img")
+            downloader.download_sukisu_manager(const.BASE_DIR)
+            return [f for f in const.BASE_DIR.glob("*.apk") if f.name.lower().startswith("sukisu")]
         else:
-             cmd_output = dev.adb_shell("ls -t /sdcard/Download/kernelsu_next_patched_*.img")
+            downloader.download_ksu_apk(const.BASE_DIR)
+            candidates = list(const.BASE_DIR.glob("*.apk"))
+            ksu_apks = [
+                f for f in candidates
+                if (f.name.lower().startswith("kernelsu_next") or ("spoofed" in f.name.lower() and "kernelsu" in f.name.lower()))
+                and not f.name.lower().startswith("sukisu")
+            ]
+            if not ksu_apks:
+                ksu_apks = [f for f in candidates if not f.name.lower().startswith("sukisu")]
+            return ksu_apks
+
+    def _patch_via_app(self, dev: device.DeviceController, work_dir: Path, img_name: str) -> Optional[Path]:
+        is_sukisu = (self.root_type == "sukisu")
+        check_msg = get_string("act_check_ksu")
+        if is_sukisu:
+            check_msg = check_msg.replace("KernelSU Next", "SukiSU Ultra")
+        utils.ui.echo(check_msg)
+
+        ksu_apks = self._prepare_and_find_manager_apks()
+
+        if not ksu_apks:
+            skip_msg = get_string("act_skip_ksu")
+            if is_sukisu:
+                skip_msg = skip_msg.replace("KernelSU Next", "SukiSU Ultra")
+            utils.ui.echo(skip_msg)
+            return None
         
-        if not cmd_output.strip():
-            utils.ui.echo(get_string("act_err_no_patched_files"))
+        apk_path = ksu_apks[0]
+        utils.ui.echo(get_string("act_install_ksu").format(name=apk_path.name))
+        try:
+            dev.install_apk(str(apk_path))
+            utils.ui.echo(get_string("act_ksu_ok"))
+        except Exception as e:
+            utils.ui.echo(get_string("act_err_ksu").format(e=e))
+            utils.ui.echo(get_string("act_root_anyway"))
+        
+        utils.ui.echo(get_string("act_push_init_boot"))
+        local_img_path = work_dir / img_name
+        remote_img_path = f"/sdcard/{img_name}"
+        try:
+            dev.push_file(str(local_img_path), remote_img_path)
+        except Exception as e:
+            utils.ui.echo(get_string("act_err_push_init_boot").format(e=e))
             return None
 
-        files = cmd_output.strip().splitlines()
-        latest_file_remote = files[0].strip()
+        prompt_key = "act_prompt_patch_app_sukisu" if is_sukisu else "act_prompt_patch_app"
+        utils.ui.echo(get_string(prompt_key))
+        utils.ui.echo(get_string("press_enter_to_continue"))
+        try:
+            utils.ui.prompt()
+        except EOFError:
+            raise RuntimeError(get_string('act_op_cancel'))
         
-        if not latest_file_remote:
-             utils.ui.echo(get_string("act_err_no_patched_files"))
-             return None
-
-        utils.ui.echo(get_string("act_pull_patched_file").format(file=latest_file_remote))
-        
-        final_path = const.BASE_DIR / "init_boot.root.img"
-        if final_path.exists():
-            final_path.unlink()
-
-        dev.pull_file(latest_file_remote, str(final_path))
-        
-        if not final_path.exists():
-            utils.ui.echo(get_string("act_err_pull_failed"))
-            return None
+        utils.ui.echo(get_string("act_find_patched_file"))
+        try:
+            pattern = "kernelsu_patched_*.img" if is_sukisu else "kernelsu_next_patched_*.img"
+            cmd_output = dev.adb_shell(f"ls -t /sdcard/Download/{pattern}")
             
-        return final_path
+            if not cmd_output.strip():
+                utils.ui.echo(get_string("act_err_no_patched_files"))
+                return None
 
-    except Exception as e:
-        utils.ui.echo(get_string("act_err_pull_process").format(e=e))
-        return None
+            files = cmd_output.strip().splitlines()
+            latest_file_remote = files[0].strip()
+            
+            if not latest_file_remote:
+                 utils.ui.echo(get_string("act_err_no_patched_files"))
+                 return None
+
+            utils.ui.echo(get_string("act_pull_patched_file").format(file=latest_file_remote))
+            
+            final_path = const.BASE_DIR / "init_boot.root.img"
+            if final_path.exists():
+                final_path.unlink()
+
+            dev.pull_file(latest_file_remote, str(final_path))
+            
+            if not final_path.exists():
+                utils.ui.echo(get_string("act_err_pull_failed"))
+                return None
+                
+            return final_path
+
+        except Exception as e:
+            utils.ui.echo(get_string("act_err_pull_process").format(e=e))
+            return None
 
 def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
-    img_name = const.FN_BOOT if gki else const.FN_INIT_BOOT
-    bak_name = const.FN_BOOT_BAK if gki else const.FN_INIT_BOOT_BAK
-    out_dir = const.OUTPUT_ROOT_DIR if gki else const.OUTPUT_ROOT_LKM_DIR
-    out_dir_name = const.OUTPUT_ROOT_DIR.name if gki else const.OUTPUT_ROOT_LKM_DIR.name
+    strategy = GkiRootStrategy() if gki else LkmRootStrategy(root_type)
     
-    vbmeta_img_name = const.FN_VBMETA
-    vbmeta_bak_name = const.FN_VBMETA_BAK
-
-    if gki:
-        wait_prompt_key = "act_prompt_boot"
-        success_msg_key = "act_root_saved"
-        fail_msg_key = "act_err_root_fail"
-        err_missing_key = "act_err_boot_missing"
-    else:
-        wait_prompt_key = "act_prompt_init_boot_app"
-        success_msg_key = "act_root_saved_lkm"
-        fail_msg_key = "act_err_root_fail_lkm"
-        err_missing_key = "act_err_init_boot_missing"
-
-    wait_prompt = get_string(wait_prompt_key)
-    success_msg = get_string(success_msg_key)
-    fail_msg = get_string(fail_msg_key)
-    err_missing = get_string(err_missing_key)
-
-    utils.ui.echo(get_string("act_clean_root_out").format(dir=out_dir_name))
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
-    out_dir.mkdir(exist_ok=True)
+    utils.ui.echo(get_string("act_clean_root_out").format(dir=strategy.log_output_dir_name))
+    if strategy.output_dir.exists():
+        shutil.rmtree(strategy.output_dir)
+    strategy.output_dir.mkdir(exist_ok=True)
     utils.ui.echo("")
     
     utils.check_dependencies()
 
-    utils.ui.echo(get_string("act_wait_boot") if gki else get_string("act_wait_init_boot"))
-    const.IMAGE_DIR.mkdir(exist_ok=True) 
-    required_files = [img_name]
-    
-    if not gki:
-        required_files.append(vbmeta_img_name)
-        wait_prompt = wait_prompt.replace(f"'{img_name}'", f"'{img_name}' and '{vbmeta_img_name}'")
+    wait_msg = get_string("act_wait_boot") if gki else get_string("act_wait_init_boot")
+    utils.ui.echo(wait_msg)
+    const.IMAGE_DIR.mkdir(exist_ok=True)
 
-    prompt = wait_prompt.format(name=const.IMAGE_DIR.name)
-    utils.wait_for_files(const.IMAGE_DIR, required_files, prompt)
-    
-    boot_img_src = const.IMAGE_DIR / img_name
-    boot_img = const.BASE_DIR / img_name
-    
-    try:
-        shutil.copy(boot_img_src, boot_img)
-        utils.ui.echo(get_string("act_copy_boot").format(name=boot_img_src.name))
-    except (IOError, OSError) as e:
-        utils.ui.error(get_string("act_err_copy_boot").format(name=boot_img_src.name, e=e))
-        raise ToolError(get_string("act_err_copy_boot").format(name=boot_img_src.name, e=e))
-
+    prompt = get_string("act_prompt_boot").format(name=const.IMAGE_DIR.name)
     if not gki:
-        vbmeta_img_src = const.IMAGE_DIR / vbmeta_img_name
-        vbmeta_img = const.BASE_DIR / vbmeta_img_name
+        prompt = prompt.replace(f"'{const.FN_BOOT}'", f"'{const.FN_INIT_BOOT}' and '{const.FN_VBMETA}'")
+
+    utils.wait_for_files(const.IMAGE_DIR, strategy.required_files, prompt)
+
+    for fname in strategy.required_files:
+        src = const.IMAGE_DIR / fname
+        dst = const.BASE_DIR / fname
         try:
-            shutil.copy(vbmeta_img_src, vbmeta_img)
-            utils.ui.echo(get_string("act_copy_boot").format(name=vbmeta_img_src.name))
+            shutil.copy(src, dst)
+            utils.ui.echo(get_string("act_copy_boot").format(name=src.name))
         except (IOError, OSError) as e:
-            utils.ui.error(get_string("act_err_copy_boot").format(name=vbmeta_img_src.name, e=e))
-            raise ToolError(get_string("act_err_copy_boot").format(name=vbmeta_img_src.name, e=e))
+            utils.ui.error(get_string("act_err_copy_boot").format(name=src.name, e=e))
+            raise ToolError(get_string("act_err_copy_boot").format(name=src.name, e=e))
 
-    if not boot_img.exists():
-        utils.ui.echo(err_missing)
-        raise ToolError(err_missing)
+    if not (const.BASE_DIR / strategy.image_name).exists():
+        msg = get_string("act_err_boot_missing") if gki else get_string("act_err_init_boot_missing")
+        utils.ui.echo(msg)
+        raise ToolError(msg)
 
     utils.ui.echo(get_string("act_backup_boot"))
-    shutil.copy(boot_img, const.BASE_DIR / bak_name)
+    shutil.copy(const.BASE_DIR / strategy.image_name, const.BASE_DIR / strategy.backup_name)
     if not gki:
-        shutil.copy(vbmeta_img, const.BASE_DIR / vbmeta_bak_name)
+        shutil.copy(const.BASE_DIR / const.FN_VBMETA, const.BASE_DIR / const.FN_VBMETA_BAK)
 
     patched_boot_path = None
-    patched_vbmeta_path = None
-    lkm_kernel_version: Optional[str] = None
-
     with utils.temporary_workspace(const.WORK_DIR):
-        shutil.copy(boot_img, const.WORK_DIR / img_name)
-        boot_img.unlink()
-        if not gki:
-            vbmeta_img.unlink()
+        shutil.copy(const.BASE_DIR / strategy.image_name, const.WORK_DIR / strategy.image_name)
+        (const.BASE_DIR / strategy.image_name).unlink()
         
-        if gki:
-            magiskboot_exe = utils.get_platform_executable("magiskboot")
-            ensure_magiskboot()
-            patched_boot_path = patch_boot_with_root_algo(const.WORK_DIR, magiskboot_exe, dev=None, gki=True)
-        else:
+        if not gki:
+            (const.BASE_DIR / const.FN_VBMETA).unlink()
+        
+        dev = None
+        if not gki:
             try:
                 dev = device.DeviceController(skip_adb=False)
                 dev.wait_for_adb()
-                lkm_kernel_version = dev.get_kernel_version()
-                patched_boot_path = _patch_lkm_via_app(dev, const.WORK_DIR, img_name, root_type=root_type)
             except Exception as e:
                 utils.ui.error(get_string("act_err_adb_process").format(e=e))
-                patched_boot_path = None
+        
+        patched_boot_path = strategy.patch(const.WORK_DIR, dev=dev)
 
     if patched_boot_path and patched_boot_path.exists():
         utils.ui.echo(get_string("act_finalize_root"))
-        final_boot_img = out_dir / img_name
         
-        process_boot_image_avb(patched_boot_path, gki=gki)
-
-        if not gki:
-            vbmeta_bak = const.BASE_DIR / vbmeta_bak_name
-            patched_vbmeta_path = const.BASE_DIR / const.FN_VBMETA_ROOT
-            
-            rebuild_vbmeta_with_chained_images(
-                output_path=patched_vbmeta_path,
-                original_vbmeta_path=vbmeta_bak,
-                chained_images=[patched_boot_path]
-            )
-            utils.ui.echo("")
-
-        utils.ui.echo(get_string("act_move_root_final").format(dir=out_dir_name))
-        shutil.move(patched_boot_path, final_boot_img)
-        if patched_vbmeta_path and patched_vbmeta_path.exists():
-            shutil.move(patched_vbmeta_path, out_dir / vbmeta_img_name)
+        strategy.finalize_patch(patched_boot_path, strategy.output_dir, const.BASE_DIR)
+        utils.ui.echo("")
 
         utils.ui.echo(get_string("act_move_root_backup").format(dir=const.BACKUP_DIR.name))
         const.BACKUP_DIR.mkdir(exist_ok=True)
@@ -248,36 +318,33 @@ def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
 
         utils.ui.echo("  " + "=" * 78)
         utils.ui.echo(get_string("act_success"))
-        utils.ui.echo(success_msg.format(dir=out_dir_name))
+        
+        success_msg = get_string("act_root_saved").format(dir=strategy.log_output_dir_name)
         if not gki:
-            utils.ui.echo(get_string("act_root_saved_vbmeta_lkm").format(name=vbmeta_img_name, dir=out_dir_name))
+             success_msg = get_string("act_root_saved_lkm").format(dir=strategy.log_output_dir_name)
+             
+        utils.ui.echo(success_msg)
+        if not gki:
+            utils.ui.echo(get_string("act_root_saved_vbmeta_lkm").format(name=const.FN_VBMETA, dir=strategy.log_output_dir_name))
         
         utils.ui.echo("\n" + get_string("act_root_manual_flash_notice"))
         utils.ui.echo("  " + "=" * 78)
     else:
+        fail_msg = get_string("act_err_root_fail") if gki else get_string("act_err_root_fail_lkm")
         utils.ui.error(fail_msg)
 
 def root_device(dev: device.DeviceController, gki: bool = False, root_type: str = "ksu") -> None:
+    strategy = GkiRootStrategy() if gki else LkmRootStrategy(root_type)
+
     utils.ui.echo(get_string("act_start_root"))
     
-    img_name = const.FN_BOOT if gki else const.FN_INIT_BOOT
-    bak_name = const.FN_BOOT_BAK if gki else const.FN_INIT_BOOT_BAK
-    out_dir = const.OUTPUT_ROOT_DIR if gki else const.OUTPUT_ROOT_LKM_DIR
-    bak_dir = const.BACKUP_BOOT_DIR if gki else const.BACKUP_INIT_BOOT_DIR
-    
-    vbmeta_img_name = const.FN_VBMETA
-    vbmeta_bak_name = const.FN_VBMETA_BAK
-    
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
-    out_dir.mkdir(exist_ok=True)
-    bak_dir.mkdir(exist_ok=True)
+    if strategy.output_dir.exists():
+        shutil.rmtree(strategy.output_dir)
+    strategy.output_dir.mkdir(exist_ok=True)
+    strategy.backup_dir.mkdir(exist_ok=True)
 
     utils.check_dependencies()
-    
     edl.ensure_edl_requirements()
-
-    magiskboot_exe = utils.get_platform_executable("magiskboot")
     ensure_magiskboot()
 
     utils.ui.echo(get_string("act_root_step1"))
@@ -285,9 +352,9 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
         dev.wait_for_adb()
 
     active_slot = detect_active_slot_robust(dev)
+    suffix = active_slot if active_slot else ""
     
-    lkm_kernel_version: Optional[str] = None
-
+    lkm_kernel_version = None
     if not gki:
         if not dev.skip_adb:
             try:
@@ -299,181 +366,108 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
             utils.ui.error(get_string("act_root_err_lkm_skip_adb"))
             raise ToolError(get_string("act_root_err_lkm_skip_adb_exc"))
 
-    target_partition = ""
-    target_vbmeta_partition = ""
+    partition_map = strategy.get_partition_map(suffix)
+    main_partition = partition_map["main"]
+    
     if active_slot:
         utils.ui.echo(get_string("act_slot_confirmed").format(slot=active_slot))
-        target_partition = f"boot{active_slot}" if gki else f"init_boot{active_slot}"
-        target_vbmeta_partition = f"vbmeta{active_slot}"
     else:
         utils.ui.echo(get_string("act_warn_root_slot"))
-        target_partition = "boot" if gki else "init_boot"
-        target_vbmeta_partition = "vbmeta"
+        main_partition = strategy.image_name.replace(".img", "")
 
-    if not dev.skip_adb:
-        is_sukisu = (root_type == "sukisu")
-
-        check_msg = get_string("act_check_ksu")
-        if is_sukisu:
-            check_msg = check_msg.replace("KernelSU Next", "SukiSU Ultra")
-        utils.ui.echo(check_msg)
-        
-        ksu_apks = _prepare_and_find_manager_apks(root_type)
-        
-        if ksu_apks:
-            apk_path = ksu_apks[0]
-            utils.ui.echo(get_string("act_install_ksu").format(name=apk_path.name))
-            try:
-                dev.install_apk(str(apk_path))
-                utils.ui.echo(get_string("act_ksu_ok"))
-            except Exception as e:
-                utils.ui.echo(get_string("act_err_ksu").format(e=e))
-                utils.ui.echo(get_string("act_root_anyway"))
-        else:
-            skip_key = "act_skip_ksu"
-            skip_msg = get_string(skip_key)
-            if is_sukisu:
-                skip_msg = skip_msg.replace("KernelSU Next", "SukiSU Ultra")
-            utils.ui.echo(skip_msg)
-    
     utils.ui.echo(get_string("act_root_step2"))
     port = dev.setup_edl_connection()
-    
     try:
         dev.load_firehose_programmer_with_stability(const.EDL_LOADER_FILE, port)
     except Exception as e:
         utils.ui.echo(get_string("act_warn_prog_load").format(e=e))
 
-    if gki:
-        utils.ui.echo(get_string("act_root_step3").format(part=target_partition))
-    else:
-        utils.ui.echo(get_string("act_root_step3_init_boot").format(part=target_partition))
-    
-    params = None
-    params_vbmeta = None
-    final_boot_img = out_dir / img_name
-    final_vbmeta_img = out_dir / vbmeta_img_name
-    
+    step3_msg = get_string("act_root_step3") if gki else get_string("act_root_step3_init_boot")
+    utils.ui.echo(step3_msg.format(part=main_partition))
+
     with utils.temporary_workspace(const.WORKING_BOOT_DIR):
-        dumped_boot_img = const.WORKING_BOOT_DIR / img_name
-        backup_boot_img = bak_dir / img_name
-        base_boot_bak = const.BASE_DIR / bak_name
-
-        dumped_vbmeta_img = const.WORKING_BOOT_DIR / vbmeta_img_name
-        backup_vbmeta_img = bak_dir / vbmeta_img_name
-        base_vbmeta_bak = const.BASE_DIR / vbmeta_bak_name
-
+        dumped_main = const.WORKING_BOOT_DIR / strategy.image_name
+        backup_main = strategy.backup_dir / strategy.image_name
+        base_main_bak = const.BASE_DIR / strategy.backup_name
+        
         try:
-            params = ensure_params_or_fail(target_partition)
+            params = ensure_params_or_fail(main_partition)
             utils.ui.echo(get_string("act_found_dump_info").format(xml=params['source_xml'], lun=params['lun'], start=params['start_sector']))
             dev.edl_read_partition(
                 port=port,
-                output_filename=str(dumped_boot_img),
+                output_filename=str(dumped_main),
                 lun=params['lun'],
                 start_sector=params['start_sector'],
                 num_sectors=params['num_sectors']
             )
-            
+
             if not gki:
-                params_vbmeta = ensure_params_or_fail(target_vbmeta_partition)
-                utils.ui.echo(get_string("act_found_dump_info").format(xml=params_vbmeta['source_xml'], lun=params_vbmeta['lun'], start=params_vbmeta['start_sector']))
+                vbmeta_partition = partition_map["vbmeta"]
+                params_vbmeta = ensure_params_or_fail(vbmeta_partition)
+                dumped_vbmeta = const.WORKING_BOOT_DIR / const.FN_VBMETA
+                
                 dev.edl_read_partition(
                     port=port,
-                    output_filename=str(dumped_vbmeta_img),
+                    output_filename=str(dumped_vbmeta),
                     lun=params_vbmeta['lun'],
                     start_sector=params_vbmeta['start_sector'],
                     num_sectors=params_vbmeta['num_sectors']
                 )
 
             if params.get('size_in_kb'):
-                try:
-                    expected_size_bytes = int(float(params['size_in_kb']) * 1024)
-                    actual_size_bytes = dumped_boot_img.stat().st_size
-                    
-                    if expected_size_bytes != actual_size_bytes:
-                        raise RuntimeError(
-                            get_string("act_err_dump_mismatch").format(
-                                part=target_partition,
-                                expected=expected_size_bytes,
-                                actual=actual_size_bytes
-                            )
-                        )
-                except (ValueError, OSError) as e:
-                    utils.ui.error(get_string("act_err_dump").format(part=target_partition, e=f"Size validation error: {e}"))
-                    raise
-            
-            if gki:
-                utils.ui.echo(get_string("act_read_boot_ok").format(part=target_partition, file=dumped_boot_img))
-            else:
-                utils.ui.echo(get_string("act_read_init_boot_ok").format(part=target_partition, file=dumped_boot_img))
-                utils.ui.echo(get_string("act_read_boot_ok").format(part=target_vbmeta_partition, file=dumped_vbmeta_img))
+                expected = int(float(params['size_in_kb']) * 1024)
+                actual = dumped_main.stat().st_size
+                if expected != actual:
+                    raise RuntimeError(get_string("act_err_dump_mismatch").format(part=main_partition, expected=expected, actual=actual))
+
+            read_ok_msg = get_string("act_read_boot_ok") if gki else get_string("act_read_init_boot_ok")
+            utils.ui.echo(read_ok_msg.format(part=main_partition, file=dumped_main))
+
         except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
-            utils.ui.error(get_string("act_err_dump").format(part=target_partition, e=e))
+            utils.ui.error(get_string("act_err_dump").format(part=main_partition, e=e))
             raise
 
-        utils.ui.echo(get_string("act_backup_boot_root").format(dir=backup_boot_img.parent.name))
-        shutil.copy(dumped_boot_img, backup_boot_img)
+        utils.ui.echo(get_string("act_backup_boot_root").format(dir=strategy.backup_dir.name))
+        shutil.copy(dumped_main, backup_main)
         utils.ui.echo(get_string("act_temp_backup_avb"))
-        shutil.copy(dumped_boot_img, base_boot_bak)
+        shutil.copy(dumped_main, base_main_bak)
+        
         if not gki:
-            shutil.copy(dumped_vbmeta_img, backup_vbmeta_img)
-            shutil.copy(dumped_vbmeta_img, base_vbmeta_bak)
+            shutil.copy(const.WORKING_BOOT_DIR / const.FN_VBMETA, strategy.backup_dir / const.FN_VBMETA)
+            shutil.copy(const.WORKING_BOOT_DIR / const.FN_VBMETA, const.BASE_DIR / const.FN_VBMETA_BAK)
+        
         utils.ui.echo(get_string("act_backups_done"))
 
         utils.ui.echo(get_string("act_dump_reset"))
         dev.edl_reset(port)
         
-        if gki:
-            utils.ui.echo(get_string("act_root_step4"))
-        else:
-            utils.ui.echo(get_string("act_root_step4_init_boot"))
-            
-        patched_boot_path = patch_boot_with_root_algo(
-            const.WORKING_BOOT_DIR, magiskboot_exe, 
-            dev=dev, gki=gki,
-            lkm_kernel_version=lkm_kernel_version,
-            root_type=root_type
-        )
+        step4_msg = get_string("act_root_step4") if gki else get_string("act_root_step4_init_boot")
+        utils.ui.echo(step4_msg)
+
+        patched_boot_path = strategy.patch(const.WORKING_BOOT_DIR, dev, lkm_kernel_version)
 
         if not (patched_boot_path and patched_boot_path.exists()):
             utils.ui.error(get_string("act_err_root_fail"))
-            base_boot_bak.unlink(missing_ok=True)
-            if not gki: base_vbmeta_bak.unlink(missing_ok=True)
+            base_main_bak.unlink(missing_ok=True)
+            if not gki: (const.BASE_DIR / const.FN_VBMETA_BAK).unlink(missing_ok=True)
             raise ToolError(get_string("act_err_root_fail"))
 
         utils.ui.echo(get_string("act_root_step5"))
         try:
-            process_boot_image_avb(patched_boot_path, gki=gki)
+            final_boot = strategy.finalize_patch(patched_boot_path, strategy.output_dir, const.BASE_DIR)
+            utils.ui.echo(get_string("act_patched_boot_saved").format(dir=final_boot.parent.name))
         except Exception as e:
             utils.ui.error(get_string("act_err_avb_footer").format(e=e))
-            base_boot_bak.unlink(missing_ok=True)
-            if not gki: base_vbmeta_bak.unlink(missing_ok=True)
+            base_main_bak.unlink(missing_ok=True)
+            if not gki: (const.BASE_DIR / const.FN_VBMETA_BAK).unlink(missing_ok=True)
             raise
 
-        if not gki:
-            vbmeta_bak = base_vbmeta_bak
-            patched_vbmeta_path = const.BASE_DIR / const.FN_VBMETA_ROOT
-            
-            rebuild_vbmeta_with_chained_images(
-                output_path=patched_vbmeta_path,
-                original_vbmeta_path=vbmeta_bak,
-                chained_images=[patched_boot_path]
-            )
-            utils.ui.echo("")
-            shutil.move(patched_vbmeta_path, final_vbmeta_img)
-            utils.ui.echo(get_string("act_patched_boot_saved").format(dir=final_vbmeta_img.parent.name))
+        base_main_bak.unlink(missing_ok=True)
+        if not gki: (const.BASE_DIR / const.FN_VBMETA_BAK).unlink(missing_ok=True)
 
-        shutil.move(patched_boot_path, final_boot_img)
-        utils.ui.echo(get_string("act_patched_boot_saved").format(dir=final_boot_img.parent.name))
+    step6_msg = get_string("act_root_step6") if gki else get_string("act_root_step6_init_boot")
+    utils.ui.echo(step6_msg.format(part=main_partition))
 
-        base_boot_bak.unlink(missing_ok=True)
-        if not gki: base_vbmeta_bak.unlink(missing_ok=True)
-
-    if gki:
-        utils.ui.echo(get_string("act_root_step6").format(part=target_partition))
-    else:
-        utils.ui.echo(get_string("act_root_step6_init_boot").format(part=target_partition))
-    
     if not dev.skip_adb:
         utils.ui.echo(get_string("act_wait_sys_adb"))
         dev.wait_for_adb()
@@ -490,16 +484,17 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
         utils.ui.echo(get_string("act_warn_prog_load").format(e=e))
 
     try:
-        edl.flash_partition_target(dev, port, target_partition, final_boot_img)
+        final_boot_path = strategy.output_dir / strategy.image_name
+        edl.flash_partition_target(dev, port, main_partition, final_boot_path)
+        
+        flash_ok_msg = get_string("act_flash_boot_ok") if gki else get_string("act_flash_init_boot_ok")
+        utils.ui.echo(flash_ok_msg.format(part=main_partition))
 
         if not gki:
-            edl.flash_partition_target(dev, port, target_vbmeta_partition, final_vbmeta_img)
-            utils.ui.echo(get_string("act_flash_boot_ok").format(part=target_vbmeta_partition))
-
-        if gki:
-            utils.ui.echo(get_string("act_flash_boot_ok").format(part=target_partition))
-        else:
-            utils.ui.echo(get_string("act_flash_init_boot_ok").format(part=target_partition))
+            final_vbmeta_path = strategy.output_dir / const.FN_VBMETA
+            vbmeta_part = partition_map["vbmeta"]
+            edl.flash_partition_target(dev, port, vbmeta_part, final_vbmeta_path)
+            utils.ui.echo(get_string("act_flash_boot_ok").format(part=vbmeta_part))
 
         utils.ui.echo(get_string("act_reset_sys"))
         dev.edl_reset(port)
@@ -512,20 +507,17 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
 def unroot_device(dev: device.DeviceController) -> None:
     utils.ui.echo(get_string("act_start_unroot"))
     
-    gki_bak_dir = const.BACKUP_BOOT_DIR
-    lkm_bak_dir = const.BACKUP_INIT_BOOT_DIR
+    gki_strategy = GkiRootStrategy()
+    lkm_strategy = LkmRootStrategy()
     
-    gki_boot_file = gki_bak_dir / const.FN_BOOT
-    lkm_init_boot_file = lkm_bak_dir / const.FN_INIT_BOOT
-    lkm_vbmeta_file = lkm_bak_dir / const.FN_VBMETA
-    
-    gki_bak_dir.mkdir(exist_ok=True)
-    lkm_bak_dir.mkdir(exist_ok=True)
+    gki_boot_file = gki_strategy.backup_dir / gki_strategy.image_name
+    lkm_init_boot_file = lkm_strategy.backup_dir / lkm_strategy.image_name
+    lkm_vbmeta_file = lkm_strategy.backup_dir / const.FN_VBMETA
     
     gki_exists = gki_boot_file.exists()
     lkm_exists = lkm_init_boot_file.exists() and lkm_vbmeta_file.exists()
     
-    unroot_mode: Optional[str] = None
+    selected_strategy = None
     
     if gki_exists and lkm_exists:
         os.system('cls')
@@ -537,12 +529,12 @@ def unroot_device(dev: device.DeviceController) -> None:
         utils.ui.echo("\n" + get_string("act_unroot_menu_m"))
         utils.ui.echo("\n  " + "=" * 78 + "\n")
         
-        while unroot_mode is None:
+        while selected_strategy is None:
             choice = utils.ui.prompt(get_string("act_unroot_menu_prompt")).strip().lower()
             if choice == "1":
-                unroot_mode = "lkm"
+                selected_strategy = lkm_strategy
             elif choice == "2":
-                unroot_mode = "gki"
+                selected_strategy = gki_strategy
             elif choice == "m":
                 utils.ui.echo(get_string("act_op_cancel"))
                 return
@@ -551,14 +543,14 @@ def unroot_device(dev: device.DeviceController) -> None:
                 
     elif lkm_exists:
         utils.ui.echo(get_string("act_unroot_lkm_detected"))
-        unroot_mode = "lkm"
+        selected_strategy = lkm_strategy
     elif gki_exists:
         utils.ui.echo(get_string("act_unroot_gki_detected"))
-        unroot_mode = "gki"
+        selected_strategy = gki_strategy
     else:
         prompt = get_string("act_unroot_prompt_all").format(
-            lkm_dir=lkm_bak_dir.name, 
-            gki_dir=gki_bak_dir.name
+            lkm_dir=lkm_strategy.backup_dir.name, 
+            gki_dir=gki_strategy.backup_dir.name
         )
         
         def check_for_unroot_files(p: Path, f: Optional[list]) -> bool:
@@ -567,23 +559,21 @@ def unroot_device(dev: device.DeviceController) -> None:
         utils._wait_for_resource(const.BASE_DIR, check_for_unroot_files, prompt, None)
         
         if lkm_init_boot_file.exists() and lkm_vbmeta_file.exists():
-            unroot_mode = "lkm"
+            selected_strategy = lkm_strategy
             utils.ui.echo(get_string("act_unroot_lkm_detected"))
         else:
-            unroot_mode = "gki"
+            selected_strategy = gki_strategy
             utils.ui.echo(get_string("act_unroot_gki_detected"))
 
     utils.ui.echo(get_string("act_unroot_step1"))
-
     edl.ensure_edl_requirements()
-
     utils.ui.echo(get_string("act_unroot_step3"))
+    
     if not dev.skip_adb:
         dev.wait_for_adb()
     
     active_slot = detect_active_slot_robust(dev)
     suffix = active_slot if active_slot else ""
-
     port = dev.setup_edl_connection()
 
     try:
@@ -592,19 +582,21 @@ def unroot_device(dev: device.DeviceController) -> None:
         utils.ui.echo(get_string("act_warn_prog_load").format(e=e))
 
     try:
-        if unroot_mode == "lkm":
-            target_init_boot = f"init_boot{suffix}"
-            target_vbmeta = f"vbmeta{suffix}"
+        partition_map = selected_strategy.get_partition_map(suffix)
+        
+        if isinstance(selected_strategy, LkmRootStrategy):
             utils.ui.echo(get_string("act_unroot_step4_lkm"))
-
+            
+            target_init_boot = partition_map["main"]
             edl.flash_partition_target(dev, port, target_init_boot, lkm_init_boot_file)
             utils.ui.echo(get_string("act_flash_stock_init_boot_ok").format(part=target_init_boot))
 
+            target_vbmeta = partition_map["vbmeta"]
             edl.flash_partition_target(dev, port, target_vbmeta, lkm_vbmeta_file)
             utils.ui.echo(get_string("act_flash_stock_vbmeta_ok").format(part=target_vbmeta))
             
-        elif unroot_mode == "gki":
-            target_boot = f"boot{suffix}"
+        elif isinstance(selected_strategy, GkiRootStrategy):
+            target_boot = partition_map["main"]
             utils.ui.echo(get_string("act_unroot_step4_gki").format(part=target_boot))
             
             edl.flash_partition_target(dev, port, target_boot, gki_boot_file)
@@ -679,6 +671,7 @@ def sign_and_flash_twrp(dev: device.DeviceController) -> None:
 
         utils.ui.echo(get_string("act_sign_twrp_start"))
         
+        from ..patch.avb import extract_image_avb_info, _apply_hash_footer
         rec_info = extract_image_avb_info(dumped_recovery)
         
         pubkey = rec_info.get('pubkey_sha1')
