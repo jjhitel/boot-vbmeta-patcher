@@ -333,9 +333,7 @@ def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
         fail_msg = get_string("act_err_root_fail") if gki else get_string("act_err_root_fail_lkm")
         utils.ui.error(fail_msg)
 
-def root_device(dev: device.DeviceController, gki: bool = False, root_type: str = "ksu") -> None:
-    strategy = GkiRootStrategy() if gki else LkmRootStrategy(root_type)
-
+def _prepare_root_env(strategy: RootStrategy):
     utils.ui.echo(get_string("act_start_root"))
     
     if strategy.output_dir.exists():
@@ -347,41 +345,39 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
     edl.ensure_edl_requirements()
     ensure_magiskboot()
 
-    utils.ui.echo(get_string("act_root_step1"))
-    if not dev.skip_adb:
-        dev.adb.wait_for_device()
-
-    active_slot = detect_active_slot_robust(dev)
-    suffix = active_slot if active_slot else ""
-    
-    lkm_kernel_version = None
+def _get_lkm_kernel_version(dev: device.DeviceController, gki: bool) -> Optional[str]:
     if not gki:
         if not dev.skip_adb:
             try:
-                lkm_kernel_version = dev.adb.get_kernel_version()
+                return dev.adb.get_kernel_version()
             except Exception as e:
                 utils.ui.error(get_string("act_root_warn_lkm_kver_fail").format(e=e))
                 utils.ui.error(get_string("act_root_warn_lkm_kver_retry"))
         else:
             utils.ui.error(get_string("act_root_err_lkm_skip_adb"))
             raise ToolError(get_string("act_root_err_lkm_skip_adb_exc"))
+    return None
 
-    partition_map = strategy.get_partition_map(suffix)
-    main_partition = partition_map["main"]
+def _dump_partition_to_workspace(dev: device.DeviceController, port: str, label: str, output_path: Path):
+    params = ensure_params_or_fail(label)
+    utils.ui.echo(get_string("act_found_dump_info").format(xml=params['source_xml'], lun=params['lun'], start=params['start_sector']))
+    dev.edl.read_partition(
+        port=port,
+        output_filename=str(output_path),
+        lun=params['lun'],
+        start_sector=params['start_sector'],
+        num_sectors=params['num_sectors']
+    )
+    if params.get('size_in_kb'):
+        expected = int(float(params['size_in_kb']) * 1024)
+        actual = output_path.stat().st_size
+        if expected != actual:
+            raise RuntimeError(get_string("act_err_dump_mismatch").format(part=label, expected=expected, actual=actual))
+
+def _dump_and_generate_root_image(dev: device.DeviceController, port: str, strategy: RootStrategy, 
+                                  partition_map: Dict[str, str], gki: bool, lkm_kernel_version: Optional[str]) -> Path:
     
-    if active_slot:
-        utils.ui.echo(get_string("act_slot_confirmed").format(slot=active_slot))
-    else:
-        utils.ui.echo(get_string("act_warn_root_slot"))
-        main_partition = strategy.image_name.replace(".img", "")
-
-    utils.ui.echo(get_string("act_root_step2"))
-    port = dev.setup_edl_connection()
-    try:
-        dev.edl.load_programmer_safe(port, const.EDL_LOADER_FILE)
-    except Exception as e:
-        utils.ui.echo(get_string("act_warn_prog_load").format(e=e))
-
+    main_partition = partition_map["main"]
     step3_msg = get_string("act_root_step3") if gki else get_string("act_root_step3_init_boot")
     utils.ui.echo(step3_msg.format(part=main_partition))
 
@@ -391,34 +387,12 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
         base_main_bak = const.BASE_DIR / strategy.backup_name
         
         try:
-            params = ensure_params_or_fail(main_partition)
-            utils.ui.echo(get_string("act_found_dump_info").format(xml=params['source_xml'], lun=params['lun'], start=params['start_sector']))
-            dev.edl.read_partition(
-                port=port,
-                output_filename=str(dumped_main),
-                lun=params['lun'],
-                start_sector=params['start_sector'],
-                num_sectors=params['num_sectors']
-            )
+            _dump_partition_to_workspace(dev, port, main_partition, dumped_main)
 
             if not gki:
                 vbmeta_partition = partition_map["vbmeta"]
-                params_vbmeta = ensure_params_or_fail(vbmeta_partition)
                 dumped_vbmeta = const.WORKING_BOOT_DIR / const.FN_VBMETA
-                
-                dev.edl.read_partition(
-                    port=port,
-                    output_filename=str(dumped_vbmeta),
-                    lun=params_vbmeta['lun'],
-                    start_sector=params_vbmeta['start_sector'],
-                    num_sectors=params_vbmeta['num_sectors']
-                )
-
-            if params.get('size_in_kb'):
-                expected = int(float(params['size_in_kb']) * 1024)
-                actual = dumped_main.stat().st_size
-                if expected != actual:
-                    raise RuntimeError(get_string("act_err_dump_mismatch").format(part=main_partition, expected=expected, actual=actual))
+                _dump_partition_to_workspace(dev, port, vbmeta_partition, dumped_vbmeta)
 
             read_ok_msg = get_string("act_read_boot_ok") if gki else get_string("act_read_init_boot_ok")
             utils.ui.echo(read_ok_msg.format(part=main_partition, file=dumped_main))
@@ -437,27 +411,25 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
             shutil.copy(const.WORKING_BOOT_DIR / const.FN_VBMETA, const.BASE_DIR / const.FN_VBMETA_BAK)
         
         utils.ui.echo(get_string("act_backups_done"))
-
         utils.ui.echo(get_string("act_dump_reset"))
         dev.edl.reset(port)
         
         step4_msg = get_string("act_root_step4") if gki else get_string("act_root_step4_init_boot")
         utils.ui.echo(step4_msg)
 
-        patched_boot_path = strategy.patch(const.WORKING_BOOT_DIR, dev, lkm_kernel_version)
-
-        if not (patched_boot_path and patched_boot_path.exists()):
-            utils.ui.error(get_string("act_err_root_fail"))
-            base_main_bak.unlink(missing_ok=True)
-            if not gki: (const.BASE_DIR / const.FN_VBMETA_BAK).unlink(missing_ok=True)
-            raise ToolError(get_string("act_err_root_fail"))
-
-        utils.ui.echo(get_string("act_root_step5"))
         try:
+            patched_boot_path = strategy.patch(const.WORKING_BOOT_DIR, dev, lkm_kernel_version)
+            if not (patched_boot_path and patched_boot_path.exists()):
+                raise ToolError(get_string("act_err_root_fail"))
+
+            utils.ui.echo(get_string("act_root_step5"))
             final_boot = strategy.finalize_patch(patched_boot_path, strategy.output_dir, const.BASE_DIR)
             utils.ui.echo(get_string("act_patched_boot_saved").format(dir=final_boot.parent.name))
         except Exception as e:
-            utils.ui.error(get_string("act_err_avb_footer").format(e=e))
+            if isinstance(e, ToolError):
+                utils.ui.error(str(e))
+            else:
+                utils.ui.error(get_string("act_err_avb_footer").format(e=e))
             base_main_bak.unlink(missing_ok=True)
             if not gki: (const.BASE_DIR / const.FN_VBMETA_BAK).unlink(missing_ok=True)
             raise
@@ -465,6 +437,10 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
         base_main_bak.unlink(missing_ok=True)
         if not gki: (const.BASE_DIR / const.FN_VBMETA_BAK).unlink(missing_ok=True)
 
+        return strategy.output_dir / strategy.image_name
+
+def _flash_root_image(dev: device.DeviceController, strategy: RootStrategy, partition_map: Dict[str, str], gki: bool):
+    main_partition = partition_map["main"]
     step6_msg = get_string("act_root_step6") if gki else get_string("act_root_step6_init_boot")
     utils.ui.echo(step6_msg.format(part=main_partition))
 
@@ -501,6 +477,42 @@ def root_device(dev: device.DeviceController, gki: bool = False, root_type: str 
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         utils.ui.error(get_string("act_err_edl_write").format(e=e))
         raise
+
+def root_device(dev: device.DeviceController, gki: bool = False, root_type: str = "ksu") -> None:
+    strategy = GkiRootStrategy() if gki else LkmRootStrategy(root_type)
+
+    _prepare_root_env(strategy)
+    
+    utils.ui.echo(get_string("act_root_step1"))
+    if not dev.skip_adb:
+        dev.adb.wait_for_device()
+
+    active_slot = detect_active_slot_robust(dev)
+    suffix = active_slot if active_slot else ""
+    
+    lkm_kernel_version = _get_lkm_kernel_version(dev, gki)
+
+    partition_map = strategy.get_partition_map(suffix)
+    main_partition = partition_map["main"]
+    
+    if active_slot:
+        utils.ui.echo(get_string("act_slot_confirmed").format(slot=active_slot))
+    else:
+        utils.ui.echo(get_string("act_warn_root_slot"))
+        main_partition = strategy.image_name.replace(".img", "")
+        if gki: partition_map["main"] = "boot"
+        else: partition_map["main"] = "init_boot"
+
+    utils.ui.echo(get_string("act_root_step2"))
+    port = dev.setup_edl_connection()
+    try:
+        dev.edl.load_programmer_safe(port, const.EDL_LOADER_FILE)
+    except Exception as e:
+        utils.ui.echo(get_string("act_warn_prog_load").format(e=e))
+
+    _dump_and_generate_root_image(dev, port, strategy, partition_map, gki, lkm_kernel_version)
+
+    _flash_root_image(dev, strategy, partition_map, gki)
 
     utils.ui.echo(get_string("act_root_finish"))
 
