@@ -378,7 +378,7 @@ def download_sukisu_manager(target_dir: Path) -> None:
                     break
     except Exception as e:
         msg_err_download = get_string("dl_err_ksu_download")
-        msg_err_download = msg_downloading.replace("KernelSU Next", "SukiSU Ultra")
+        msg_err_download = msg_err_download.replace("KernelSU Next", "SukiSU Ultra")
         utils.ui.error(msg_err_download.format(e=e))
     finally:
         if temp_zip.exists():
