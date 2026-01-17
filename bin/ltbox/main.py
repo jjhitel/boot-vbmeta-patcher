@@ -114,7 +114,6 @@ def _get_advanced_menu_data(target_region: str) -> List[Dict[str, Any]]:
         {"type": "option", "key": "1", "text": region_text, "action": "convert"},
         {"type": "option", "key": "2", "text": get_string("menu_adv_2"), "action": "dump_partitions"},
         {"type": "separator"},
-        # ... (Rest of the menu items remain the same)
         {"type": "label", "text": get_string('menu_adv_sub_patch_region')},
         {"type": "option", "key": "3", "text": get_string("menu_adv_3"), "action": "edit_dp"},
         {"type": "option", "key": "4", "text": get_string("menu_adv_4"), "action": "flash_partitions"},
@@ -131,6 +130,7 @@ def _get_advanced_menu_data(target_region: str) -> List[Dict[str, Any]]:
         {"type": "option", "key": "11", "text": get_string("menu_adv_11"), "action": "flash_full_firmware"},
         {"type": "separator"},
         {"type": "label", "text": get_string('menu_adv_sub_nav')},
+        {"type": "option", "key": "b", "text": get_string("menu_back"), "action": "back"},
         {"type": "option", "key": "m", "text": get_string("menu_adv_m"), "action": "return"},
         {"type": "option", "key": "x", "text": get_string("menu_main_exit"), "action": "exit"},
     ]
@@ -140,6 +140,7 @@ def _get_root_mode_menu_data() -> List[Dict[str, Any]]:
         {"type": "option", "key": "1", "text": get_string("menu_root_mode_1")},
         {"type": "option", "key": "2", "text": get_string("menu_root_mode_2")},
         {"type": "separator"},
+        {"type": "option", "key": "b", "text": get_string("menu_back")},
         {"type": "option", "key": "m", "text": get_string("menu_root_m")},
         {"type": "option", "key": "x", "text": get_string("menu_main_exit")},
     ]
@@ -157,6 +158,7 @@ def _get_root_menu_data(gki: bool, root_type: str) -> List[Dict[str, Any]]:
         items.append({"type": "option", "key": "2", "text": label_2, "action": "patch_root_image_file_lkm"})
     
     items.append({"type": "separator"})
+    items.append({"type": "option", "key": "b", "text": get_string("menu_back"), "action": "back"})
     items.append({"type": "option", "key": "m", "text": get_string("menu_root_m"), "action": "return"})
     items.append({"type": "option", "key": "x", "text": get_string("menu_main_exit"), "action": "exit"})
     return items
@@ -170,6 +172,7 @@ def _get_settings_menu_data(skip_adb_state: str, skip_rb_state: str, target_regi
         {"type": "option", "key": "3", "text": get_string("menu_settings_skip_rb").format(state=skip_rb_state), "action": "toggle_rollback"},
         {"type": "option", "key": "4", "text": get_string("menu_settings_lang"), "action": "change_lang"},
         {"type": "separator"},
+        {"type": "option", "key": "b", "text": get_string("menu_back"), "action": "back"},
         {"type": "option", "key": "m", "text": get_string("menu_settings_m"), "action": "return"},
     ]
 
@@ -401,7 +404,9 @@ def advanced_menu(dev, registry: CommandRegistry, target_region: str):
         choice = menu.ask(get_string("menu_adv_prompt"), get_string("menu_adv_invalid"))
         action = action_map.get(choice)
 
-        if action == "return":
+        if action == "back":
+            return
+        elif action == "return":
             return
         elif action == "exit":
             sys.exit()
@@ -420,7 +425,7 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
             mode_menu.add_option("1", "KernelSU Next")
             mode_menu.add_option("2", "SukiSU Ultra")
             mode_menu.add_separator()
-            mode_menu.add_option("m", get_string("menu_root_m"))
+            mode_menu.add_option("b", get_string("menu_back"))
             
             choice = mode_menu.ask(get_string("menu_root_lkm_type_prompt"), get_string("menu_root_invalid"))
             
@@ -430,7 +435,7 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
             elif choice == "2":
                 root_type = "sukisu"
                 break
-            elif choice == "m":
+            elif choice == "b":
                 return
 
     while True:
@@ -443,8 +448,10 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
         choice = menu.ask(get_string("menu_root_prompt"), get_string("menu_root_invalid"))
         action = action_map.get(choice)
 
-        if action == "return":
+        if action == "back":
             return
+        elif action == "return":
+            return "main"
         elif action == "exit":
             sys.exit()
         elif action:
@@ -461,14 +468,20 @@ def root_mode_selection_menu(dev, registry: CommandRegistry):
         
         choice = menu.ask(get_string("menu_root_mode_prompt"), get_string("menu_root_mode_invalid"))
 
+        result = None
         if choice == "1":
-            root_menu(dev, registry, gki=False)
+            result = root_menu(dev, registry, gki=False)
         elif choice == "2":
-            root_menu(dev, registry, gki=True)
+            result = root_menu(dev, registry, gki=True)
+        elif choice == "b":
+            return
         elif choice == "m":
             return
         elif choice == "x":
             sys.exit()
+
+        if result == "main":
+            return
 
 def settings_menu(dev, registry: CommandRegistry, skip_adb: bool, skip_rollback: bool, target_region: str) -> Tuple[bool, bool, str]:
     while True:
@@ -484,7 +497,9 @@ def settings_menu(dev, registry: CommandRegistry, skip_adb: bool, skip_rollback:
         choice = menu.ask(get_string("menu_settings_prompt"), get_string("menu_settings_invalid"))
         action = action_map.get(choice)
         
-        if action == "return":
+        if action == "back":
+            return skip_adb, skip_rollback, target_region
+        elif action == "return":
             return skip_adb, skip_rollback, target_region
         elif action == "toggle_region":
             target_region = "ROW" if target_region == "PRC" else "PRC"

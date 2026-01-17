@@ -602,6 +602,7 @@
   "menu_adv_sub_region_dump": "--- 지역 및 추출 ---",
   "menu_adv_sub_xml_flash": "--- XML 및 플래싱 ---",
   "menu_adv_title": "LTBox - 고급",
+  "menu_back": "이전으로 돌아가기",
   "menu_lang_invalid": "  [!] 잘못된 선택입니다. 1에서 {len} 사이의 숫자를 입력하세요.",
   "menu_lang_prompt": "  선택하세요 (1-{len}): ",
   "menu_lang_title": "언어 선택",

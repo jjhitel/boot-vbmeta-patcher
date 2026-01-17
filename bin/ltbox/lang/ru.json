@@ -603,6 +603,7 @@
   "menu_adv_sub_region_dump": "--- Регион и Дамп ---",
   "menu_adv_sub_xml_flash": "--- XML и Прошивка ---",
   "menu_adv_title": "LTBox - Дополнительно",
+  "menu_back": "Назад",
   "menu_lang_invalid": "  [!] Неверный выбор. Введите число от 1 до {len}.",
   "menu_lang_prompt": "  Выберите пункт (1-{len}): ",
   "menu_lang_title": "Выбор языка",
