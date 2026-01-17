@@ -63,8 +63,6 @@ def patch_boot_with_root_algo(
         shutil.move(work_dir / "new-boot.img", patched_boot_path)
         print(get_string("img_root_repack_ok"))
 
-        downloader.download_ksu_apk(const.BASE_DIR)
-        
         return patched_boot_path
     
     else:
