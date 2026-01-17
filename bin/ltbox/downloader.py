@@ -302,7 +302,6 @@ def download_nightly_artifacts(repo: str, workflow_id: str, manager_name: str, m
     base_url = f"https://nightly.link/{repo}/actions/runs/{workflow_id}"
     
     manager_url = f"{base_url}/{manager_name}"
-    ksuinit_url = f"{base_url}/ksuinit"
     lkm_url = f"{base_url}/{mapped_name}-lkm.zip"
     
     manager_zip = target_dir / manager_name
@@ -313,7 +312,35 @@ def download_nightly_artifacts(repo: str, workflow_id: str, manager_name: str, m
     
     try:
         download_resource(manager_url, manager_zip)
-        download_resource(ksuinit_url, ksuinit_dest)
+        
+        ksuinit_variants = ["ksuinit", "ksuinit-aarch64-linux-android"]
+        ksuinit_downloaded = False
+        
+        for variant in ksuinit_variants:
+            ksuinit_url = f"{base_url}/{variant}.zip"
+            temp_ksuinit_zip = target_dir / f"temp_{variant}.zip"
+            try:
+                download_resource(ksuinit_url, temp_ksuinit_zip)
+                
+                with zipfile.ZipFile(temp_ksuinit_zip, 'r') as zf:
+                    for member in zf.namelist():
+                        if member.endswith("ksuinit"):
+                            with zf.open(member) as src, open(ksuinit_dest, "wb") as dst:
+                                shutil.copyfileobj(src, dst)
+                            ksuinit_downloaded = True
+                            break
+                temp_ksuinit_zip.unlink()
+                
+                if ksuinit_downloaded:
+                    break
+            except Exception:
+                if temp_ksuinit_zip.exists():
+                    temp_ksuinit_zip.unlink()
+                continue
+        
+        if not ksuinit_downloaded:
+            raise ToolError("Failed to download ksuinit (tried variants)")
+
         download_resource(lkm_url, lkm_dest)
         
         utils.ui.echo(get_string("dl_download_success").format(filename="All Artifacts"))
