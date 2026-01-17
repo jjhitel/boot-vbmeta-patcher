@@ -131,7 +131,6 @@ def _get_advanced_menu_data(target_region: str) -> List[Dict[str, Any]]:
         {"type": "separator"},
         {"type": "label", "text": get_string('menu_adv_sub_nav')},
         {"type": "option", "key": "b", "text": get_string("menu_back"), "action": "back"},
-        {"type": "option", "key": "m", "text": get_string("menu_adv_m"), "action": "return"},
         {"type": "option", "key": "x", "text": get_string("menu_main_exit"), "action": "exit"},
     ]
 
@@ -141,7 +140,6 @@ def _get_root_mode_menu_data() -> List[Dict[str, Any]]:
         {"type": "option", "key": "2", "text": get_string("menu_root_mode_2")},
         {"type": "separator"},
         {"type": "option", "key": "b", "text": get_string("menu_back")},
-        {"type": "option", "key": "m", "text": get_string("menu_root_m")},
         {"type": "option", "key": "x", "text": get_string("menu_main_exit")},
     ]
 
@@ -173,7 +171,6 @@ def _get_settings_menu_data(skip_adb_state: str, skip_rb_state: str, target_regi
         {"type": "option", "key": "4", "text": get_string("menu_settings_lang"), "action": "change_lang"},
         {"type": "separator"},
         {"type": "option", "key": "b", "text": get_string("menu_back"), "action": "back"},
-        {"type": "option", "key": "m", "text": get_string("menu_settings_m"), "action": "return"},
     ]
 
 def _get_main_menu_data(target_region: str) -> List[Dict[str, Any]]:
@@ -408,6 +405,7 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
             mode_menu.add_option("2", "SukiSU Ultra")
             mode_menu.add_separator()
             mode_menu.add_option("b", get_string("menu_back"))
+            mode_menu.add_option("m", get_string("menu_root_m"))
             
             choice = mode_menu.ask(get_string("menu_root_lkm_type_prompt"), get_string("menu_root_invalid"))
             
@@ -419,6 +417,8 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
                 break
             elif choice == "b":
                 return
+            elif choice == "m":
+                return "main"
 
     while True:
         menu_items = _get_root_menu_data(gki, root_type)
@@ -456,8 +456,6 @@ def root_mode_selection_menu(dev, registry: CommandRegistry):
         elif choice == "2":
             result = root_menu(dev, registry, gki=True)
         elif choice == "b":
-            return
-        elif choice == "m":
             return
         elif choice == "x":
             sys.exit()
