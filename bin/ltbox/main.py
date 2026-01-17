@@ -381,7 +381,7 @@ def advanced_menu(dev, registry: CommandRegistry, target_region: str):
 
         action_map = {item["key"]: item["action"] for item in menu_items if item.get("type") == "option"}
 
-        choice = menu.ask(get_string("menu_adv_prompt"), get_string("menu_adv_invalid"))
+        choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
         action = action_map.get(choice)
 
         if action == "back":
@@ -408,7 +408,7 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
             mode_menu.add_option("b", get_string("menu_back"))
             mode_menu.add_option("m", get_string("menu_root_m"))
             
-            choice = mode_menu.ask(get_string("menu_root_lkm_type_prompt"), get_string("menu_root_invalid"))
+            choice = mode_menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
             
             if choice == "1":
                 root_type = "ksu"
@@ -428,7 +428,7 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
         
         action_map = {item["key"]: item["action"] for item in menu_items if item.get("type") == "option"}
 
-        choice = menu.ask(get_string("menu_root_prompt"), get_string("menu_root_invalid"))
+        choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
         action = action_map.get(choice)
 
         if action == "back":
@@ -449,7 +449,7 @@ def root_mode_selection_menu(dev, registry: CommandRegistry):
         menu = TerminalMenu(get_string("menu_root_mode_title"))
         menu.populate(menu_items)
         
-        choice = menu.ask(get_string("menu_root_mode_prompt"), get_string("menu_root_mode_invalid"))
+        choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
 
         result = None
         if choice == "1":
@@ -475,7 +475,7 @@ def settings_menu(dev, registry: CommandRegistry, skip_adb: bool, skip_rollback:
         
         action_map = {item["key"]: item["action"] for item in menu_items if item.get("type") == "option"}
         
-        choice = menu.ask(get_string("menu_settings_prompt"), get_string("menu_settings_invalid"))
+        choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
         action = action_map.get(choice)
         
         if action == "back":
@@ -525,8 +525,8 @@ def prompt_for_language(force_prompt: bool = False) -> str:
         lang_map[key] = lang_code
         menu.add_option(key, lang_name)
 
-    prompt = get_string("menu_lang_prompt").format(len=len(lang_map))
-    error_msg = get_string("menu_lang_invalid").format(len=len(lang_map))
+    prompt = get_string("prompt_select").format(len=len(lang_map))
+    error_msg = get_string("err_invalid_selection").format(len=len(lang_map))
     
     choice = menu.ask(prompt, error_msg)
     selected_lang = lang_map[choice]
@@ -551,7 +551,7 @@ def main_loop(device_controller_class, registry: CommandRegistry):
 
         action_map = {item["key"]: item["action"] for item in menu_items if item.get("type") == "option"}
 
-        choice = menu.ask(get_string("menu_main_prompt"), get_string("menu_main_invalid"))
+        choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
         action = action_map.get(choice)
         
         if action == "exit":
