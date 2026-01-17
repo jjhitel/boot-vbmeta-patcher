@@ -434,6 +434,7 @@
   "dl_tool_success": "[+] {tool_name} 설치 성공.",
   "dl_unsupported_arch": "[!] {tool_name}에 대해 지원되지 않는 아키텍처 {arch}입니다. 중단합니다.",
   "err_aborting": "[!] 중단합니다.",
+  "err_already_running": "LTBox가 이미 실행 중입니다.\n종료하려면 Enter 키를 누르세요.",
   "err_arch_unsupported": "[!] 32비트(I386) 또는 ARM64 빌드는 지원되지 않습니다.",
   "err_cmd_failed": "명령어 실행 실패: {cmd}",
   "err_cmd_stderr_header": "=== 표준 오류 ===",

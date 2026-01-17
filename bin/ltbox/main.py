@@ -3,6 +3,7 @@ import platform
 import subprocess
 import sys
 import json
+import ctypes
 from pathlib import Path
 from datetime import datetime
 from typing import Tuple, Dict, Callable, Any, List, Optional
@@ -572,6 +573,19 @@ def main_loop(device_controller_class, registry: CommandRegistry):
                 extras["target_region"] = target_region
             run_task(action, dev, registry, extra_kwargs=extras)
 
+# --- Singleton Check ---
+
+def _acquire_single_instance_mutex() -> Optional[Any]:
+    kernel32 = ctypes.windll.kernel32
+    mutex_name = "Global\\LTBox_Singleton_Mutex"
+
+    mutex = kernel32.CreateMutexW(None, False, mutex_name)
+    
+    if kernel32.GetLastError() == 183:
+        return None
+        
+    return mutex
+
 # --- Entry Point ---
 
 def entry_point():
@@ -587,6 +601,13 @@ def entry_point():
             lang_code = prompt_for_language()
             
         i18n.load_lang(lang_code)
+
+        singleton_mutex = _acquire_single_instance_mutex()
+        if not singleton_mutex:
+            ui.clear()
+            ui.error(get_string("err_already_running"))
+            input()
+            sys.exit(0)
         
         ui.clear()
 

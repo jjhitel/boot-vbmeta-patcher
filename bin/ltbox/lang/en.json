@@ -435,6 +435,7 @@
   "dl_tool_success": "[+] {tool_name} installed successfully.",
   "dl_unsupported_arch": "[!] Unsupported architecture {arch} for {tool_name}. Aborting.",
   "err_aborting": "[!] Aborting.",
+  "err_already_running": "LTBox is already running.\nPress Enter to exit.",
   "err_arch_unsupported": "[!] 32-bit (I386) or ARM64 builds are not supported.",
   "err_cmd_failed": "Command execution failed: {cmd}",
   "err_cmd_stderr_header": "=== STDERR ===",

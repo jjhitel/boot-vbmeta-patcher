@@ -435,6 +435,7 @@
   "dl_tool_success": "[+] Ресурс {tool_name} успешно установлен.",
   "dl_unsupported_arch": "[!] Неподдерживаемая архитектура {arch} для {tool_name}. Отмена.",
   "err_aborting": "[!] Отмена.",
+  "err_already_running": "LTBox уже запущен.\nНажмите Enter для выхода.",
   "err_arch_unsupported": "[!] 32-битные (I386) или ARM64 сборки не поддерживаются.",
   "err_cmd_failed": "Ошибка выполнения команды: {cmd}",
   "err_cmd_stderr_header": "=== STDERR ===",
