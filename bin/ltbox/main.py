@@ -185,21 +185,16 @@ def _get_main_menu_data(target_region: str) -> List[Dict[str, Any]]:
         install_keep_text = get_string("menu_main_install_keep_prc")
 
     return [
-        {"type": "label", "text": get_string('menu_main_sub_install')},
         {"type": "option", "key": "1", "text": install_wipe_text, "action": "patch_all_wipe"},
         {"type": "option", "key": "2", "text": install_keep_text, "action": "patch_all"},
         {"type": "separator"},
-        {"type": "label", "text": get_string('menu_main_sub_manage')},
         {"type": "option", "key": "3", "text": get_string("menu_main_disable_ota"), "action": "disable_ota"},
         {"type": "option", "key": "4", "text": get_string("menu_main_rescue"), "action": "rescue_ota"},
         {"type": "option", "key": "5", "text": get_string("menu_main_root"), "action": "menu_root"},
         {"type": "option", "key": "6", "text": get_string("menu_main_unroot"), "action": "unroot_device"},
         {"type": "option", "key": "7", "text": get_string("menu_main_rec_flash"), "action": "sign_and_flash_twrp"},
         {"type": "separator"},
-        {"type": "label", "text": get_string('menu_main_sub_settings')},
         {"type": "option", "key": "0", "text": get_string("menu_main_settings"), "action": "menu_settings"},
-        {"type": "separator"},
-        {"type": "label", "text": get_string('menu_main_sub_nav')},
         {"type": "option", "key": "a", "text": get_string("menu_main_adv"), "action": "menu_advanced"},
         {"type": "option", "key": "x", "text": get_string("menu_main_exit"), "action": "exit"},
     ]
@@ -287,10 +282,6 @@ def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Di
     base_kwargs = cmd_info["default_kwargs"]
     require_dev = cmd_info["require_dev"]
 
-    ui.echo("=" * 78)
-    ui.echo(get_string("starting_task").format(title=title))
-    ui.echo("=" * 78 + "\n")
-
     try:
         final_kwargs = base_kwargs.copy()
         
@@ -301,10 +292,6 @@ def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Di
             final_kwargs["dev"] = dev
 
         result = func(**final_kwargs)
-
-        ui.echo("\n" + "=" * 78)
-        ui.echo(get_string("act_success"))
-        ui.echo("=" * 78)
 
         if isinstance(result, str) and result:
             ui.echo(result)
@@ -333,11 +320,6 @@ def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Di
         ui.error(get_string("process_cancelled"))
     finally:
         ui.echo("")
-
-        ui.echo("=" * 78)
-        ui.echo(get_string("task_completed").format(title=title))
-        ui.echo("=" * 78 + "\n")
-
         input(get_string("press_enter_to_continue"))
 
 def run_info_scan(paths, constants, avb_patch):
