@@ -100,6 +100,9 @@ class GkiRootStrategy(RootStrategy):
 class LkmRootStrategy(RootStrategy):
     def __init__(self, root_type: str = "ksu"):
         self.root_type = root_type
+        self.is_nightly = False
+        self.workflow_id = None
+        self.repo_config = {}
 
     @property
     def image_name(self) -> str:
@@ -159,100 +162,103 @@ class LkmRootStrategy(RootStrategy):
         if not val:
             return default_id
         return val
-
-    def _download_nightly(self, root_name, repo, default_workflow, manager_zip, kernel_version, work_dir) -> bool:
-        mapped_name = self._get_mapped_kernel_name(kernel_version)
-        if not mapped_name:
-            utils.ui.error(get_string("err_sukisu_kernel_map_not_found").format(ver=kernel_version))
-            return False
-
-        while True:
-            workflow_id = self._prompt_workflow(root_name, default_workflow)
-            try:
-                temp_dl_dir = const.TOOLS_DIR / "dl_temp"
-                if temp_dl_dir.exists(): shutil.rmtree(temp_dl_dir)
-                temp_dl_dir.mkdir(exist_ok=True)
-
-                downloader.download_nightly_artifacts(
-                    repo=repo, workflow_id=workflow_id,
-                    manager_name=manager_zip, mapped_name=mapped_name,
-                    target_dir=temp_dl_dir
-                )
-
-                mgr_zip_path = temp_dl_dir / manager_zip
-                apk_found = False
-                if mgr_zip_path.exists():
-                    with zipfile.ZipFile(mgr_zip_path, 'r') as zf:
-                        for name in zf.namelist():
-                            if name.endswith(".apk"):
-                                with zf.open(name) as src, open(const.TOOLS_DIR / "manager.apk", "wb") as dst:
-                                    shutil.copyfileobj(src, dst)
-                                apk_found = True
-                                break
-                
-                if not apk_found:
-                    raise ToolError("Manager APK not found in zip.")
-
-                lkm_zip = temp_dl_dir / "lkm.zip"
-                ko_found = False
-                if lkm_zip.exists():
-                    with zipfile.ZipFile(lkm_zip, 'r') as zf:
-                        for name in zf.namelist():
-                            if name.endswith("kernelsu.ko"):
-                                with zf.open(name) as src, open(work_dir / "kernelsu.ko", "wb") as dst:
-                                    shutil.copyfileobj(src, dst)
-                                ko_found = True
-                                break
-                
-                if not ko_found:
-                    raise ToolError("kernelsu.ko not found in zip.")
-                
-                shutil.copy(temp_dl_dir / "ksuinit", work_dir / "init")
-                
-                shutil.rmtree(temp_dl_dir)
-                return True
-
-            except Exception as e:
-                utils.ui.error(f"{e}")
-                utils.ui.error(get_string("err_download_workflow"))
-                
-                choice = utils.ui.prompt(get_string("press_enter_to_continue"))
-                return False
-
-    def patch(self, work_dir: Path, dev: Optional[device.DeviceController] = None, lkm_kernel_version: Optional[str] = None) -> Path:
-        self._cleanup_manager_apk()
-        magiskboot_exe = utils.get_platform_executable("magiskboot")
-        ensure_magiskboot()
+    
+    def configure_source(self) -> None:
         settings = const.load_settings_raw()
-
+        
         if self.root_type == "sukisu":
-            conf = settings.get("sukisu-ultra", {})
-            success = self._download_nightly(
-                "SukiSU Ultra", conf.get("repo"), conf.get("workflow"),
-                conf.get("manager"), lkm_kernel_version, work_dir
-            )
-            if not success: return None
-            
+            self.is_nightly = True
+            self.repo_config = settings.get("sukisu-ultra", {})
+            self.workflow_id = self._prompt_workflow("SukiSU Ultra", self.repo_config.get("workflow"))
         else:
             menu = TerminalMenu(get_string("menu_root_subtype_title"))
             menu.add_option("1", get_string("menu_root_subtype_release"))
             menu.add_option("2", get_string("menu_root_subtype_nightly"))
             
-            while True:
-                choice = menu.ask(get_string("menu_root_subtype_prompt"), get_string("menu_invalid"))
-                if choice == "1":
-                    downloader.download_ksu_manager_release(const.TOOLS_DIR)
-                    downloader.download_ksuinit_release(work_dir / "init")
-                    downloader.get_lkm_kernel_release(work_dir / "kernelsu.ko", lkm_kernel_version)
-                    break
-                elif choice == "2":
-                    conf = settings.get("kernelsu-next", {})
-                    success = self._download_nightly(
-                        "KernelSU Next", conf.get("repo"), conf.get("nightly_workflow"),
-                        conf.get("nightly_manager"), lkm_kernel_version, work_dir
-                    )
-                    if not success: return None
-                    break
+            choice = menu.ask(get_string("menu_root_subtype_prompt"), get_string("menu_invalid"))
+            
+            if choice == "2":
+                self.is_nightly = True
+                self.repo_config = settings.get("kernelsu-next", {})
+                self.workflow_id = self._prompt_workflow("KernelSU Next", self.repo_config.get("nightly_workflow"))
+            else:
+                self.is_nightly = False
+
+    def _perform_nightly_download(self, root_name, repo, workflow_id, manager_zip, kernel_version, work_dir) -> bool:
+        mapped_name = self._get_mapped_kernel_name(kernel_version)
+        if not mapped_name:
+            utils.ui.error(get_string("err_sukisu_kernel_map_not_found").format(ver=kernel_version))
+            return False
+
+        try:
+            temp_dl_dir = const.TOOLS_DIR / "dl_temp"
+            if temp_dl_dir.exists(): shutil.rmtree(temp_dl_dir)
+            temp_dl_dir.mkdir(exist_ok=True)
+
+            downloader.download_nightly_artifacts(
+                repo=repo, workflow_id=workflow_id,
+                manager_name=manager_zip, mapped_name=mapped_name,
+                target_dir=temp_dl_dir
+            )
+
+            mgr_zip_path = temp_dl_dir / manager_zip
+            apk_found = False
+            if mgr_zip_path.exists():
+                with zipfile.ZipFile(mgr_zip_path, 'r') as zf:
+                    for name in zf.namelist():
+                        if name.endswith(".apk"):
+                            with zf.open(name) as src, open(const.TOOLS_DIR / "manager.apk", "wb") as dst:
+                                shutil.copyfileobj(src, dst)
+                            apk_found = True
+                            break
+            
+            if not apk_found:
+                raise ToolError("Manager APK not found in zip.")
+
+            lkm_zip = temp_dl_dir / "lkm.zip"
+            ko_found = False
+            if lkm_zip.exists():
+                with zipfile.ZipFile(lkm_zip, 'r') as zf:
+                    for name in zf.namelist():
+                        if name.endswith("kernelsu.ko"):
+                            with zf.open(name) as src, open(work_dir / "kernelsu.ko", "wb") as dst:
+                                shutil.copyfileobj(src, dst)
+                            ko_found = True
+                            break
+            
+            if not ko_found:
+                raise ToolError("kernelsu.ko not found in zip.")
+            
+            shutil.copy(temp_dl_dir / "ksuinit", work_dir / "init")
+            
+            shutil.rmtree(temp_dl_dir)
+            return True
+
+        except Exception as e:
+            utils.ui.error(f"{e}")
+            utils.ui.error(get_string("err_download_workflow"))
+            return False
+
+    def patch(self, work_dir: Path, dev: Optional[device.DeviceController] = None, lkm_kernel_version: Optional[str] = None) -> Path:
+        self._cleanup_manager_apk()
+        magiskboot_exe = utils.get_platform_executable("magiskboot")
+        ensure_magiskboot()
+
+        if self.is_nightly:
+            repo = self.repo_config.get("repo")
+            manager = self.repo_config.get("manager") if self.root_type == "sukisu" else self.repo_config.get("nightly_manager")
+            root_name = "SukiSU Ultra" if self.root_type == "sukisu" else "KernelSU Next"
+            
+            success = self._perform_nightly_download(
+                root_name, repo, self.workflow_id,
+                manager, lkm_kernel_version, work_dir
+            )
+            if not success: return None
+            
+        else:
+            downloader.download_ksu_manager_release(const.TOOLS_DIR)
+            downloader.download_ksuinit_release(work_dir / "init")
+            downloader.get_lkm_kernel_release(work_dir / "kernelsu.ko", lkm_kernel_version)
 
         return patch_boot_with_root_algo(
             work_dir, magiskboot_exe, dev, gki=False, 
@@ -283,7 +289,10 @@ class LkmRootStrategy(RootStrategy):
 
 def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
     strategy = GkiRootStrategy() if gki else LkmRootStrategy(root_type)
-    
+
+    if isinstance(strategy, LkmRootStrategy):
+        strategy.configure_source()
+
     utils.ui.echo(get_string("act_clean_root_out").format(dir=strategy.log_output_dir_name))
     if strategy.output_dir.exists():
         shutil.rmtree(strategy.output_dir)
@@ -516,6 +525,9 @@ def _flash_root_image(dev: device.DeviceController, strategy: RootStrategy, part
 
 def root_device(dev: device.DeviceController, gki: bool = False, root_type: str = "ksu") -> None:
     strategy = GkiRootStrategy() if gki else LkmRootStrategy(root_type)
+
+    if isinstance(strategy, LkmRootStrategy):
+        strategy.configure_source()
 
     _prepare_root_env(strategy)
     
