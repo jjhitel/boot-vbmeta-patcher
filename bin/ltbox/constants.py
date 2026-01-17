@@ -99,11 +99,17 @@ class LTBoxConfig:
 
     @property
     def ksu_apk_repo(self) -> str:
-        return self._get_val("kernelsu-next", "apk_repo")
+        try:
+            return self._get_val("kernelsu-next", "repo")
+        except RuntimeError:
+             return self._get_val("kernelsu-next", "apk_repo")
 
     @property
     def ksu_apk_tag(self) -> str:
-        return self._get_val("kernelsu-next", "apk_tag")
+        try:
+            return self._get_val("kernelsu-next", "tag")
+        except RuntimeError:
+            return self._get_val("kernelsu-next", "apk_tag")
 
     @property
     def sukisu_repo(self) -> str:
@@ -115,15 +121,15 @@ class LTBoxConfig:
 
     @property
     def release_owner(self) -> str:
-        return self._get_val("kernelsu-next", "release_owner")
+        return self._get_val("wildkernels", "owner", default="WildKernels")
 
     @property
     def release_repo(self) -> str:
-        return self._get_val("kernelsu-next", "release_repo")
+        return self._get_val("wildkernels", "repo", default="GKI_KernelSU_SUSFS")
 
     @property
     def release_tag(self) -> str:
-        return self._get_val("kernelsu-next", "release_tag")
+        return self._get_val("wildkernels", "tag", default="")
 
     @property
     def repo_url(self) -> str:
@@ -131,7 +137,10 @@ class LTBoxConfig:
 
     @property
     def anykernel_zip_filename(self) -> str:
-        return self._get_val("kernelsu-next", "anykernel_zip")
+        try:
+            return self._get_val("wildkernels", "zip")
+        except RuntimeError:
+             return self._get_val("kernelsu-next", "anykernel_zip")
 
     @property
     def edl_loader_filename(self) -> str:
@@ -186,6 +195,11 @@ class LTBoxConfig:
 
 # --- Singleton Instance ---
 CONF = LTBoxConfig()
+
+# --- Config Helper for Downloader ---
+def load_settings_raw() -> Dict[str, Any]:
+    CONF.load()
+    return CONF._config_data
 
 # --- Module Level Exports (Backward Compatibility) ---
 
