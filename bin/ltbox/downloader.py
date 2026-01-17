@@ -80,8 +80,11 @@ def _download_github_asset(repo_url: str, tag: str, asset_pattern: str, dest_dir
     else:
         owner_repo = repo_url
 
-    api_url = f"https://api.github.com/repos/{owner_repo}/releases/tags/{tag}"
-    
+    if not tag or tag.lower() == "latest":
+        api_url = f"https://api.github.com/repos/{owner_repo}/releases/latest"
+    else:
+        api_url = f"https://api.github.com/repos/{owner_repo}/releases/tags/{tag}"
+
     try:
         response = requests.get(api_url)
         response.raise_for_status()
@@ -272,28 +275,48 @@ def ensure_magiskboot() -> Path:
         asset_patterns=asset_patterns
     )
 
-def download_gki_tools(gki: bool):
-    if not gki:
-        return
-        
-    settings = const.load_settings_raw()
-    wk_config = settings.get("wildkernels", {})
-    
-    zip_name = wk_config.get("zip", "AnyKernel3.zip")
-    tag = wk_config.get("tag")
-    owner = wk_config.get("owner")
-    repo = wk_config.get("repo")
-    
-    dest = const.TOOLS_DIR / "AnyKernel3.zip"
-    if dest.exists():
-        return
-        
+
+def get_gki_kernel(kernel_version: str, work_dir: Path) -> Path:
     utils.ui.echo(get_string("dl_gki_downloading"))
-    url = f"https://github.com/{owner}/{repo}/releases/download/{tag}/{zip_name}"
     
     try:
-        download_resource(url, dest)
+        tag = const.CONF._get_val("wildkernels", "tag", default="latest")
+        owner = const.CONF._get_val("wildkernels", "owner")
+        repo = const.CONF._get_val("wildkernels", "repo")
+    except RuntimeError:
+        tag = "latest"
+        owner = const.RELEASE_OWNER
+        repo = const.RELEASE_REPO
+
+    if not tag: tag = "latest"
+    repo_ref = f"{owner}/{repo}"
+
+    asset_pattern = f"{re.escape(kernel_version)}.*Normal.*AnyKernel3\\.zip"
+    
+    try:
+        downloaded_zip = _download_github_asset(repo_ref, tag, asset_pattern, work_dir)
+        
+        anykernel_zip = work_dir / const.ANYKERNEL_ZIP_FILENAME
+        if anykernel_zip.exists(): anykernel_zip.unlink()
+        shutil.move(downloaded_zip, anykernel_zip)
+        
         utils.ui.echo(get_string("dl_gki_download_ok"))
+
+        utils.ui.echo(get_string("dl_gki_extracting"))
+        extracted_kernel_dir = work_dir / "extracted_kernel"
+        if extracted_kernel_dir.exists(): shutil.rmtree(extracted_kernel_dir)
+        
+        with zipfile.ZipFile(anykernel_zip, 'r') as zip_ref:
+            zip_ref.extractall(extracted_kernel_dir)
+        
+        kernel_image = extracted_kernel_dir / "Image"
+        if not kernel_image.exists():
+            utils.ui.echo(get_string("dl_gki_image_missing"))
+            raise ToolError(get_string("dl_gki_image_missing"))
+            
+        utils.ui.echo(get_string("dl_gki_extract_ok"))
+        return kernel_image
+        
     except Exception as e:
         utils.ui.echo(get_string("dl_gki_download_fail").format(version=tag))
         raise ToolError(f"{e}")

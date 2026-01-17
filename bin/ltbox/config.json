@@ -17,7 +17,7 @@
   "wildkernels": {
     "owner": "WildKernels",
     "repo": "GKI_KernelSU_SUSFS",
-    "tag": "v1.5.12-r19",
+    "tag": "latest",
     "zip": "AnyKernel3.zip"
   },
   "sukisu-ultra": {

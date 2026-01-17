@@ -86,11 +86,9 @@ class GkiRootStrategy(RootStrategy):
     def patch(self, work_dir: Path, dev: Optional[device.DeviceController] = None, lkm_kernel_version: Optional[str] = None) -> Path:
         magiskboot_exe = utils.get_platform_executable("magiskboot")
         ensure_magiskboot()
-        
-        downloader.download_gki_tools(gki=True)
 
         downloader.download_ksu_manager_release(const.TOOLS_DIR)
-
+        
         return patch_boot_with_root_algo(work_dir, magiskboot_exe, dev=None, gki=True)
 
     def finalize_patch(self, patched_boot: Path, output_dir: Path, backup_source_dir: Path) -> Path:
