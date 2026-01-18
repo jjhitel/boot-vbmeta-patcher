@@ -113,9 +113,9 @@ def _get_advanced_menu_data(target_region: str) -> List[Dict[str, Any]]:
     return [
         {"type": "label", "text": get_string('menu_adv_sub_region_dump')},
         {"type": "option", "key": "1", "text": region_text, "action": "convert"},
-        {"type": "option", "key": "2", "text": get_string("menu_adv_2"), "action": "dump_partitions"},
         {"type": "separator"},
         {"type": "label", "text": get_string('menu_adv_sub_patch_region')},
+        {"type": "option", "key": "2", "text": get_string("menu_adv_2"), "action": "dump_partitions"},
         {"type": "option", "key": "3", "text": get_string("menu_adv_3"), "action": "edit_dp"},
         {"type": "option", "key": "4", "text": get_string("menu_adv_4"), "action": "flash_partitions"},
         {"type": "separator"},
