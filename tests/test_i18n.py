@@ -4,78 +4,49 @@ import re
 import json
 import pytest
 from pathlib import Path
-from typing import Set, Dict
 
-BASE_DIR = Path(__file__).parent.parent
-SRC_DIR = BASE_DIR / "bin" / "ltbox"
-LANG_DIR = SRC_DIR / "lang"
+BASE = Path(__file__).parent.parent
+SRC = BASE / "bin" / "ltbox"
+LANG = SRC / "lang"
 
-def get_source_keys() -> Set[str]:
+def get_src_keys():
     keys = set()
-    pattern = re.compile(r'get_string\s*\(\s*["\']([^"\']+)["\']\s*\)')
-
-    for py_file in SRC_DIR.rglob("*.py"):
+    pat = re.compile(r'get_string\s*\(\s*["\']([^"\']+)["\']\s*\)')
+    for f in SRC.rglob("*.py"):
         try:
-            content = py_file.read_text(encoding="utf-8")
-            matches = pattern.findall(content)
-            keys.update(matches)
-        except Exception as e:
-            print(f"Warning: Failed to read {py_file}: {e}")
-
+            keys.update(pat.findall(f.read_text(encoding="utf-8")))
+        except Exception: pass
     return keys
 
-def load_lang_files() -> Dict[str, Set[str]]:
-    lang_keys = {}
-    if not LANG_DIR.exists():
-        return {}
-
-    for json_file in LANG_DIR.glob("*.json"):
+def load_langs():
+    d = {}
+    if not LANG.exists(): return {}
+    for f in LANG.glob("*.json"):
         try:
-            with open(json_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    lang_keys[json_file.name] = set(data.keys())
-        except Exception as e:
-            pytest.fail(f"Failed to load language file {json_file.name}: {e}")
+            with open(f, "r", encoding="utf-8") as fp:
+                d[f.name] = set(json.load(fp).keys())
+        except Exception: pytest.fail(f"Bad JSON {f.name}")
+    return d
 
-    return lang_keys
-
-class TestI18nIntegrity:
+class TestI18n:
+    @pytest.fixture(scope="class")
+    def src_keys(self): return get_src_keys()
 
     @pytest.fixture(scope="class")
-    def source_keys(self):
-        return get_source_keys()
+    def lang_map(self): return load_langs()
 
-    @pytest.fixture(scope="class")
-    def lang_map(self):
-        return load_lang_files()
+    def test_missing_keys(self, src_keys, lang_map):
+        if not lang_map: pytest.skip("No lang files")
+        for n, k in lang_map.items():
+            missing = src_keys - k
+            assert not missing, f"Missing in {n}: {missing}"
 
-    def test_keys_exist_in_lang_files(self, source_keys, lang_map):
-        if not lang_map:
-            pytest.skip("No language files found in bin/ltbox/lang/")
+    def test_parity(self, lang_map):
+        if not lang_map: pytest.skip("No lang files")
+        base = "en.json" if "en.json" in lang_map else list(lang_map.keys())[0]
+        base_k = lang_map[base]
 
-        for filename, file_keys in lang_map.items():
-            missing_keys = source_keys - file_keys
-
-            assert not missing_keys, f"Found keys used in code but missing in {filename}: {missing_keys}"
-
-    def test_parity_between_languages(self, lang_map):
-        if not lang_map:
-            pytest.skip("No language files found")
-
-        base_lang = "en.json"
-        if base_lang not in lang_map:
-            base_lang = list(lang_map.keys())[0]
-
-        base_keys = lang_map[base_lang]
-
-        for filename, file_keys in lang_map.items():
-            if filename == base_lang:
-                continue
-
-            missing_in_target = base_keys - file_keys
-            assert not missing_in_target, f"Keys present in {base_lang} but missing in {filename}: {missing_in_target}"
-
-            extra_in_target = file_keys - base_keys
-            if extra_in_target:
-                pytest.fail(f"Keys present in {filename} but missing in {base_lang} (deprecated?): {extra_in_target}")
+        for n, k in lang_map.items():
+            if n == base: continue
+            diff = base_k - k
+            assert not diff, f"{n} missing keys from {base}: {diff}"

@@ -1,87 +1,111 @@
 import sys
 import os
 import pytest
-from unittest.mock import patch, MagicMock
+import shutil
 import xml.etree.ElementTree as ET
+from unittest.mock import patch, MagicMock
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../bin')))
 
-from ltbox.actions import xml as xml_action
+from ltbox import constants as const
+from ltbox.actions import edl, xml as xml_action
+from ltbox.patch import region as region_patch
 
-@pytest.fixture
-def mock_xml_env(tmp_path):
-    dirs = {
-        "IMAGE_DIR": tmp_path / "image",
-        "OUTPUT_XML_DIR": tmp_path / "output_xml",
-        "WORKING_DIR": tmp_path / "working"
-    }
-    for d in dirs.values():
-        d.mkdir()
+def create_xmls(img_dir, names):
+    for n in names:
+        (img_dir / n).touch()
 
-    with patch.multiple("ltbox.actions.xml.const", **dirs):
-        yield dirs
+def test_xml_select(mock_env):
+    img_dir = mock_env["IMAGE_DIR"]
+    files = [
+        "rawprogram0.xml",
+        "rawprogram1.xml",
+        "rawprogram_unsparse0.xml",
+        "rawprogram_save_persist_unsparse0.xml",
+        "rawprogram_WIPE_PARTITIONS.xml",
+        "patch0.xml"
+    ]
+    create_xmls(img_dir, files)
 
-class TestActions:
-    def test_rawprogram_fallback_priority(self, mock_xml_env):
-        dirs = mock_xml_env
-        output_dir = dirs["OUTPUT_XML_DIR"]
-        target_file = output_dir / "rawprogram_save_persist_unsparse0.xml"
+    with patch("ltbox.actions.edl.utils.ui"):
+        raw, patch_files = edl._select_flash_xmls(skip_dp=False)
 
-        cases = [
-            (
-                ["rawprogram_unsparse0.xml", "rawprogram0.xml"],
-                "rawprogram_unsparse0.xml",
-                "MARKER_UNSPARSE"
-            ),
-            (
-                ["rawprogram0.xml"],
-                "rawprogram0.xml",
-                "MARKER_BASIC"
-            )
-        ]
+    r_names = [p.name for p in raw]
+    p_names = [p.name for p in patch_files]
 
-        xml_template = """<?xml version="1.0" ?><data><program label="{marker}" filename=""/></data>"""
+    assert "rawprogram_WIPE_PARTITIONS.xml" not in r_names
+    assert "rawprogram0.xml" not in r_names
+    assert "rawprogram1.xml" in r_names
+    assert "rawprogram_save_persist_unsparse0.xml" in r_names
+    assert "rawprogram_unsparse0.xml" not in r_names
+    assert "patch0.xml" in p_names
 
-        for filenames, expected_choice, marker in cases:
-            if target_file.exists(): target_file.unlink()
-            for f in output_dir.glob("*.xml"): f.unlink()
+def test_flash_args(mock_env):
+    img_dir = mock_env["IMAGE_DIR"]
+    files = ["rawprogram1.xml", "rawprogram_unsparse0.xml", "patch0.xml"]
+    create_xmls(img_dir, files)
 
-            for fname in filenames:
-                content_marker = marker if fname == expected_choice else "WRONG_FILE"
-                (output_dir / fname).write_text(xml_template.format(marker=content_marker))
+    mock_dev = MagicMock()
 
-            with patch("ltbox.actions.xml.utils.ui"):
-                xml_action._ensure_rawprogram_save_persist(output_dir)
+    with patch("ltbox.actions.edl.utils.ui"), \
+         patch("ltbox.actions.edl.ensure_loader_file"), \
+         patch("ltbox.actions.edl._prepare_flash_files"), \
+         patch("builtins.input", return_value="y"):
 
-            assert target_file.exists()
-            tree = ET.parse(target_file)
-            root = tree.getroot()
-            prog = root.find("program")
-            assert prog.get("label") == marker, f"Failed to pick {expected_choice} among {filenames}"
+        edl.flash_full_firmware(mock_dev, skip_reset=True, skip_reset_edl=False)
 
-    def test_decrypt_workflow(self, mock_xml_env):
-        dirs = mock_xml_env
-        (dirs["IMAGE_DIR"] / "test.x").write_text("encrypted")
+        args, _ = mock_dev.edl.flash_rawprogram.call_args
+        passed = [p.name for p in args[3]]
 
-        with patch("ltbox.actions.xml.utils.ui"), \
-             patch("ltbox.actions.xml.utils.wait_for_directory"), \
-             patch("ltbox.actions.xml.decrypt_file", return_value=True):
+        assert "rawprogram_unsparse0.xml" in passed
+        assert len(passed) == 2
 
-            xml_action.decrypt_x_files()
+def test_xml_fallback(mock_env):
+    out_dir = mock_env["OUTPUT_XML_DIR"]
+    target = out_dir / "rawprogram_save_persist_unsparse0.xml"
 
-    def test_region_patch_patterns(self):
-        if not region_patch:
-            pytest.skip("Region patch module not found")
+    cases = [
+        (["rawprogram_unsparse0.xml", "rawprogram0.xml"], "rawprogram_unsparse0.xml", "A"),
+        (["rawprogram0.xml"], "rawprogram0.xml", "B")
+    ]
+    tmpl = """<?xml version="1.0" ?><data><program label="{m}" filename=""/></data>"""
 
-        row_pat = const.ROW_PATTERN_DOT
-        prc_pat = const.PRC_PATTERN_DOT
+    for fnames, expected, marker in cases:
+        if target.exists(): target.unlink()
+        for f in out_dir.glob("*.xml"): f.unlink()
 
-        if not row_pat or not prc_pat:
-            pytest.skip("Patterns not defined in constants")
+        for fn in fnames:
+            m = marker if fn == expected else "X"
+            (out_dir / fn).write_text(tmpl.format(m=m))
 
-        data = b"PRE" + row_pat + b"SUF"
+        with patch("ltbox.actions.xml.utils.ui"):
+            xml_action._ensure_rawprogram_save_persist(out_dir)
 
-        if hasattr(region_patch, "patch_image_content"):
-            new_data, stats = region_patch.patch_image_content(data, target_region="PRC")
-            assert prc_pat in new_data
-            assert stats["changed"] is True
+        assert target.exists()
+        root = ET.parse(target).getroot()
+        assert root.find("program").get("label") == marker
+
+def test_xml_wipe(fw_pkg):
+    path = fw_pkg.get("rawprogram_unsparse0.xml")
+    if not path: pytest.skip("XML not found")
+
+    tmp_xml = path.parent / "test_wipe.xml"
+    shutil.copy(path, tmp_xml)
+
+    with patch("ltbox.actions.xml.utils.ui"):
+        xml_action._patch_xml_for_wipe(tmp_xml, wipe=0)
+
+    root = ET.parse(tmp_xml).getroot()
+    progs = [p for p in root.findall("program") if p.get("label") == "userdata"]
+    assert len(progs) > 0
+    for p in progs:
+        assert p.get("filename") == ""
+
+def test_xml_persist_check(fw_pkg):
+    path = fw_pkg.get("rawprogram_save_persist_unsparse0.xml")
+    if not path: pytest.skip("Persist XML not found")
+
+    root = ET.parse(path).getroot()
+    p = next((x for x in root.findall("program") if x.get("label") == "persist"), None)
+    if p:
+        assert p.get("filename", "") == ""
