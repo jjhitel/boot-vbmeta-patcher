@@ -134,7 +134,7 @@ def flash_partitions(dev: device.DeviceController, skip_reset: bool = False, ski
         utils.ui.error(get_string("act_err_dp_folder").format(dir=const.OUTPUT_DP_DIR.name))
         utils.ui.error(get_string("act_err_run_patch_first"))
         raise FileNotFoundError(get_string("act_err_dp_folder_nf").format(dir=const.OUTPUT_DP_DIR.name))
-    utils.ui.echo(get_string("act_found_dp_folder").format(dir=const.OUTPUT_DP_DIR.name))
+    utils.ui.echo(get_string("act_found_patched_folder").format(dir=const.OUTPUT_DP_DIR.name))
 
     port = _prepare_edl_session(dev)
 
@@ -160,7 +160,7 @@ def flash_partitions(dev: device.DeviceController, skip_reset: bool = False, ski
             utils.ui.echo(get_string("device_resetting"))
             dev.edl.reset(port)
         except Exception as e:
-            utils.ui.echo(get_string("act_warn_reboot").format(e=e))
+            utils.ui.echo(get_string("device_err_reboot").format(e=e))
     else:
         utils.ui.echo(get_string("act_skip_reboot"))
 
@@ -176,7 +176,7 @@ def write_anti_rollback(dev: device.DeviceController, skip_reset: bool = False) 
         utils.ui.error(get_string("act_err_patched_missing").format(dir=const.OUTPUT_ANTI_ROLLBACK_DIR.name))
         utils.ui.error(get_string("act_err_run_patch_arb"))
         raise FileNotFoundError(get_string("act_err_patched_missing_exc").format(dir=const.OUTPUT_ANTI_ROLLBACK_DIR.name))
-    utils.ui.echo(get_string("act_found_arb_folder").format(dir=const.OUTPUT_ANTI_ROLLBACK_DIR.name))
+    utils.ui.echo(get_string("act_found_patched_folder").format(dir=const.OUTPUT_ANTI_ROLLBACK_DIR.name))
     
     ensure_edl_requirements()
     
@@ -244,10 +244,10 @@ def _prepare_flash_files(skip_dp: bool = False) -> None:
         if const.OUTPUT_DP_DIR.exists():
             try:
                 shutil.copytree(const.OUTPUT_DP_DIR, const.IMAGE_DIR, dirs_exist_ok=True)
-                utils.ui.echo(get_string("act_copied_dp").format(src=const.OUTPUT_DP_DIR.name, dst=const.IMAGE_DIR.name))
+                utils.ui.echo(get_string("act_copied_content").format(src=const.OUTPUT_DP_DIR.name, dst=const.IMAGE_DIR.name))
                 copied_count += 1
             except Exception as e:
-                utils.ui.error(get_string("act_err_copy_dp").format(name=const.OUTPUT_DP_DIR.name, e=e))
+                utils.ui.error(get_string("act_err_copy").format(name=const.OUTPUT_DP_DIR.name, e=e))
         else:
             utils.ui.echo(get_string("act_skip_dp_copy").format(dir=const.OUTPUT_DP_DIR.name))
     else:

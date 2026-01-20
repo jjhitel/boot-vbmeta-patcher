@@ -85,7 +85,7 @@ def convert_region_images(
             if key == 'partition_size' and 'data_size' in vendor_boot_info:
                  vendor_boot_info['partition_size'] = vendor_boot_info['data_size']
             else:
-                raise KeyError(get_string("act_err_avb_key_missing").format(key=key, name=vendor_boot_bak.name))
+                raise KeyError(get_string("img_err_missing_key").format(key=key, name=vendor_boot_bak.name))
 
     add_hash_footer_cmd = [
         str(const.PYTHON_EXE), str(const.AVBTOOL_PY), "add_hash_footer",
@@ -200,7 +200,7 @@ def edit_devinfo_persist(
         shutil.copy(persist_img, backup_critical_dir)
     on_log(get_string("act_files_backed_up").format(dir=backup_critical_dir.name))
 
-    on_log(get_string("act_clean_dp_out").format(dir=const.OUTPUT_DP_DIR.name))
+    on_log(get_string("act_clean_dir").format(dir=const.OUTPUT_DP_DIR.name))
     if const.OUTPUT_DP_DIR.exists():
         shutil.rmtree(const.OUTPUT_DP_DIR)
     const.OUTPUT_DP_DIR.mkdir(exist_ok=True)

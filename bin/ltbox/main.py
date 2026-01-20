@@ -126,8 +126,8 @@ def _get_advanced_menu_data(target_region: str) -> List[Dict[str, Any]]:
         {"type": "separator"},
         {"type": "label", "text": get_string('menu_adv_sub_xml_flash')},
         {"type": "option", "key": "8", "text": get_string("menu_adv_8"), "action": "decrypt_xml"},
-        {"type": "option", "key": "9", "text": get_string("menu_adv_9"), "action": "modify_xml_wipe"},
-        {"type": "option", "key": "10", "text": get_string("menu_adv_10"), "action": "modify_xml"},
+        {"type": "option", "key": "9", "text": get_string("task_title_modify_xml_wipe"), "action": "modify_xml_wipe"},
+        {"type": "option", "key": "10", "text": get_string("task_title_modify_xml_nowipe"), "action": "modify_xml"},
         {"type": "option", "key": "11", "text": get_string("menu_adv_11"), "action": "flash_full_firmware"},
         {"type": "separator"},
         {"type": "label", "text": get_string('menu_adv_sub_nav')},
@@ -194,7 +194,7 @@ def _get_main_menu_data(target_region: str) -> List[Dict[str, Any]]:
         {"type": "option", "key": "6", "text": get_string("menu_main_unroot"), "action": "unroot_device"},
         {"type": "option", "key": "7", "text": get_string("menu_main_rec_flash"), "action": "sign_and_flash_twrp"},
         {"type": "separator"},
-        {"type": "option", "key": "0", "text": get_string("menu_main_settings"), "action": "menu_settings"},
+        {"type": "option", "key": "0", "text": get_string("menu_settings_title"), "action": "menu_settings"},
         {"type": "option", "key": "a", "text": get_string("menu_main_adv"), "action": "menu_advanced"},
         {"type": "option", "key": "x", "text": get_string("menu_main_exit"), "action": "exit"},
     ]
@@ -746,7 +746,7 @@ def entry_point():
 
     except (LTBoxError, RuntimeError) as e:
         ui.error(get_string("err_fatal_abort"))
-        ui.error(get_string("err_fatal_details").format(e=e))
+        ui.error(get_string("err_details").format(e=e))
         input(get_string("press_enter_to_exit"))
         sys.exit(1)
     except KeyboardInterrupt:

@@ -161,7 +161,7 @@ def _ensure_rawprogram4(output_dir: Path) -> None:
                 utils.ui.info(get_string("img_xml_created_raw4_no_devinfo").format(name=rawprogram4.name))
                 
         except (OSError, ET.ParseError) as e:
-            utils.ui.error(get_string("img_xml_err_process_raw4").format(name=rawprogram_unsparse4.name, e=e))
+            utils.ui.error(get_string("img_err_processing").format(name=rawprogram_unsparse4.name, e=e))
             utils.ui.info(get_string("img_xml_fallback_copy"))
             shutil.copy(rawprogram_unsparse4, rawprogram4)
 
@@ -319,8 +319,8 @@ def modify_xml(wipe: int = 0, skip_dp: bool = False) -> None:
                     dest_xml_path=(const.OUTPUT_XML_DIR / "rawprogram_write_persist_unsparse0.xml"),
                     target_label='persist',
                     new_filename='persist.img',
-                    success_key="act_created_persist_xml",
-                    error_key="act_err_create_persist_xml",
+                    success_key="act_created_xml",
+                    error_key="act_err_create_xml",
                     warn_file_missing_key="act_warn_persist_xml_missing",
                     warn_label_missing_key="act_warn_persist_label_missing"
                 )
@@ -330,8 +330,8 @@ def modify_xml(wipe: int = 0, skip_dp: bool = False) -> None:
                     dest_xml_path=(const.OUTPUT_XML_DIR / "rawprogram4_write_devinfo.xml"),
                     target_label='devinfo',
                     new_filename='devinfo.img',
-                    success_key="act_created_devinfo_xml",
-                    error_key="act_err_create_devinfo_xml",
+                    success_key="act_created_xml",
+                    error_key="act_err_create_xml",
                     warn_file_missing_key="act_warn_devinfo_xml_missing",
                     warn_label_missing_key="act_warn_devinfo_label_missing"
                 )

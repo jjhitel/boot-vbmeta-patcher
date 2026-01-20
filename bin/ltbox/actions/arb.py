@@ -23,11 +23,11 @@ def read_anti_rollback(dumped_boot_path: Path, dumped_vbmeta_path: Path) -> Tupl
         if not dumped_boot_path.exists() or not dumped_vbmeta_path.exists():
             raise FileNotFoundError(get_string("act_err_dumped_missing"))
         
-        utils.ui.echo(get_string("act_read_dumped_boot").format(name=dumped_boot_path.name))
+        utils.ui.echo(get_string("act_read_dumped_file").format(name=dumped_boot_path.name))
         boot_info = extract_image_avb_info(dumped_boot_path)
         current_boot_rb = int(boot_info.get('rollback', '0'))
         
-        utils.ui.echo(get_string("act_read_dumped_vbmeta").format(name=dumped_vbmeta_path.name))
+        utils.ui.echo(get_string("act_read_dumped_file").format(name=dumped_vbmeta_path.name))
         vbmeta_info = extract_image_avb_info(dumped_vbmeta_path)
         current_vbmeta_rb = int(vbmeta_info.get('rollback', '0'))
         

@@ -34,7 +34,7 @@ def _patch_vendor_boot_logic(content: bytes, **kwargs: Any) -> Tuple[bytes, Dict
             found_row_count += count
 
     if found_row_count > 0:
-        return modified_content, {'changed': True, 'message': get_string("img_vb_replaced_total").format(count=found_row_count)}
+        return modified_content, {'changed': True, 'message': get_string("img_code_replaced_total").format(count=found_row_count)}
 
     found_target = any(content.count(target) > 0 for target in target_patterns)
     if found_target:

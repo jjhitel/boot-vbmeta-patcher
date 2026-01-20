@@ -314,7 +314,7 @@ def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
     if isinstance(strategy, LkmRootStrategy):
         strategy.configure_source()
 
-    utils.ui.echo(get_string("act_clean_root_out").format(dir=strategy.log_output_dir_name))
+    utils.ui.echo(get_string("act_clean_dir").format(dir=strategy.log_output_dir_name))
     if strategy.output_dir.exists():
         shutil.rmtree(strategy.output_dir)
     strategy.output_dir.mkdir(exist_ok=True)
@@ -322,8 +322,8 @@ def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
     
     utils.check_dependencies()
 
-    wait_msg = get_string("act_wait_boot") if gki else get_string("act_wait_init_boot")
-    utils.ui.echo(wait_msg)
+    wait_image = strategy.image_name
+    utils.ui.echo(get_string("act_wait_image").format(image=wait_image))
     const.IMAGE_DIR.mkdir(exist_ok=True)
 
     prompt = get_string("act_prompt_boot").format(name=const.IMAGE_DIR.name)
@@ -343,7 +343,7 @@ def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
             raise ToolError(get_string("act_err_copy_boot").format(name=src.name, e=e))
 
     if not (const.BASE_DIR / strategy.image_name).exists():
-        msg = get_string("act_err_boot_missing") if gki else get_string("act_err_init_boot_missing")
+        msg = get_string("act_err_image_missing").format(image=strategy.image_name)
         utils.ui.echo(msg)
         raise ToolError(msg)
 
@@ -388,19 +388,15 @@ def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
         utils.ui.echo("  " + "=" * 78)
         utils.ui.echo(get_string("act_success"))
         
-        success_msg = get_string("act_root_saved").format(dir=strategy.log_output_dir_name)
+        utils.ui.echo(get_string("act_root_saved_file").format(name=strategy.image_name, dir=strategy.log_output_dir_name))
         if not gki:
-             success_msg = get_string("act_root_saved_lkm").format(dir=strategy.log_output_dir_name)
-             
-        utils.ui.echo(success_msg)
-        if not gki:
-            utils.ui.echo(get_string("act_root_saved_vbmeta_lkm").format(name=const.FN_VBMETA, dir=strategy.log_output_dir_name))
+            utils.ui.echo(get_string("act_root_saved_file").format(name=const.FN_VBMETA, dir=strategy.log_output_dir_name))
         
         utils.ui.echo("\n" + get_string("act_root_manual_flash_notice"))
         utils.ui.echo("  " + "=" * 78)
     else:
-        fail_msg = get_string("act_err_root_fail") if gki else get_string("act_err_root_fail_lkm")
-        utils.ui.error(fail_msg)
+        fail_image = "boot" if gki else "init_boot"
+        utils.ui.error(get_string("act_err_root_fail_image").format(image=fail_image))
 
 def _prepare_root_env(strategy: RootStrategy):
     utils.ui.echo(get_string("act_start_root"))
@@ -447,8 +443,8 @@ def _dump_and_generate_root_image(dev: device.DeviceController, port: str, strat
                                   partition_map: Dict[str, str], gki: bool, lkm_kernel_version: Optional[str]) -> Path:
     
     main_partition = partition_map["main"]
-    step3_msg = get_string("act_root_step3") if gki else get_string("act_root_step3_init_boot")
-    utils.ui.echo(step3_msg.format(part=main_partition))
+    step3_suffix = "" if gki else " (init_boot)"
+    utils.ui.echo(get_string("act_root_step3_dump").format(part=main_partition, suffix=step3_suffix))
 
     with utils.temporary_workspace(const.WORKING_BOOT_DIR):
         dumped_main = const.WORKING_BOOT_DIR / strategy.image_name
@@ -463,8 +459,8 @@ def _dump_and_generate_root_image(dev: device.DeviceController, port: str, strat
                 dumped_vbmeta = const.WORKING_BOOT_DIR / const.FN_VBMETA
                 _dump_partition_to_workspace(dev, port, vbmeta_partition, dumped_vbmeta)
 
-            read_ok_msg = get_string("act_read_boot_ok") if gki else get_string("act_read_init_boot_ok")
-            utils.ui.echo(read_ok_msg.format(part=main_partition, file=dumped_main))
+            read_ok_suffix = "" if gki else " (init_boot)"
+            utils.ui.echo(get_string("act_read_dump_ok").format(part=main_partition, suffix=read_ok_suffix, file=dumped_main))
 
         except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
             utils.ui.error(get_string("act_err_dump").format(part=main_partition, e=e))
@@ -483,13 +479,14 @@ def _dump_and_generate_root_image(dev: device.DeviceController, port: str, strat
         utils.ui.echo(get_string("act_dump_reset"))
         dev.edl.reset(port)
         
-        step4_msg = get_string("act_root_step4") if gki else get_string("act_root_step4_init_boot")
-        utils.ui.echo(step4_msg)
+        patch_image = "boot.img" if gki else "init_boot.img (LKM)"
+        utils.ui.echo(get_string("act_root_step4_patch").format(image=patch_image))
 
         try:
             patched_boot_path = strategy.patch(const.WORKING_BOOT_DIR, dev, lkm_kernel_version)
             if not (patched_boot_path and patched_boot_path.exists()):
-                raise ToolError(get_string("act_err_root_fail"))
+                fail_image = "boot" if gki else "init_boot"
+                raise ToolError(get_string("act_err_root_fail_image").format(image=fail_image))
 
             utils.ui.echo(get_string("act_root_step5"))
             final_boot = strategy.finalize_patch(patched_boot_path, strategy.output_dir, const.BASE_DIR)
@@ -510,8 +507,8 @@ def _dump_and_generate_root_image(dev: device.DeviceController, port: str, strat
 
 def _flash_root_image(dev: device.DeviceController, strategy: RootStrategy, partition_map: Dict[str, str], gki: bool):
     main_partition = partition_map["main"]
-    step6_msg = get_string("act_root_step6") if gki else get_string("act_root_step6_init_boot")
-    utils.ui.echo(step6_msg.format(part=main_partition))
+    flash_image = "boot.img" if gki else "init_boot.img"
+    utils.ui.echo(get_string("act_root_step6_flash").format(image=flash_image, part=main_partition))
 
     if not dev.skip_adb:
         utils.ui.echo(get_string("act_wait_sys_adb"))

@@ -277,7 +277,7 @@ def rebuild_vbmeta_with_chained_images(
     if not key_file:
         utils.ui.info(get_string("act_err_vbmeta_key_mismatch").format(key=vbmeta_pubkey))
         raise KeyError(get_string("act_err_unknown_key").format(key=vbmeta_pubkey))
-    utils.ui.info(get_string("act_key_matched").format(name=key_file.name))
+    utils.ui.info(get_string("img_key_matched").format(name=key_file.name))
 
     utils.ui.info(get_string("act_remaking_vbmeta"))
     cmd = [
