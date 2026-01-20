@@ -2,7 +2,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 from .. import constants as const
 from .. import utils, downloader, device

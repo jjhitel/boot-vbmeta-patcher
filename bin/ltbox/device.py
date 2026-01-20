@@ -4,14 +4,14 @@ import subprocess
 import time
 import serial.tools.list_ports
 from pathlib import Path
-from typing import Optional, List, Callable, Any, ContextManager
+from typing import Optional, List, Callable, Any
 
 import adbutils
 from adbutils import AdbError
 
 from . import constants as const
 from . import utils
-from .errors import DeviceError, DeviceConnectionError, DeviceCommandError, ToolError
+from .errors import DeviceConnectionError, DeviceCommandError
 from .i18n import get_string
 from .ui import ui
 

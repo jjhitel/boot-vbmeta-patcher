@@ -20,7 +20,7 @@ PYTHON_EXE = BASE_DIR / "python3" / "python.exe"
 SETTINGS_FILE = APP_DIR / "settings.json"
 
 try:
-    from .errors import ToolError, LTBoxError, UserCancelError
+    from .errors import ToolError, LTBoxError
 except ImportError:
     print(get_string("err_import_critical"), file=sys.stderr)
     print(get_string("err_ensure_errors"), file=sys.stderr)

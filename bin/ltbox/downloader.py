@@ -1,4 +1,3 @@
-import os
 import platform
 import shutil
 import subprocess
@@ -7,7 +6,7 @@ import zipfile
 import tarfile
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict
 
 from . import constants as const
 from . import utils

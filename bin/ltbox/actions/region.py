@@ -1,14 +1,11 @@
-import os
 import shutil
-import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Callable, Tuple
+from typing import Optional, List, Callable, Tuple
 
 from . import edl
 from .. import constants as const
 from .. import utils, device
-from ..partition import ensure_params_or_fail
 from ..patch.region import edit_vendor_boot, detect_country_codes, patch_country_codes
 from ..patch.avb import extract_image_avb_info, rebuild_vbmeta_with_chained_images
 from ..i18n import get_string
