@@ -1,5 +1,6 @@
 *.apk
 *.img
+*.txt
 *.zip
 backup*/
 bin/ltbox/__pycache__/
