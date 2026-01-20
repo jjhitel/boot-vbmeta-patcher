@@ -34,3 +34,7 @@ jobs:
       - name: Check Black Formatting
         run: |
           black --check bin/ltbox
+
+      - name: Run Mypy (Type Check)
+        run: |
+          mypy bin/ltbox --ignore-missing-imports
