@@ -1,13 +1,15 @@
-name: Windows Smoke Test
+name: Windows Smoke Test & Unit Test
 
 on:
   push:
     paths:
       - 'bin/**'
+      - 'tests/**'
       - '.github/workflows/windows_test.yml'
   pull_request:
     paths:
       - 'bin/**'
+      - 'tests/**'
       - '.github/workflows/windows_test.yml'
 
 jobs:
@@ -26,6 +28,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r bin/requirements.txt
+          pip install pytest
 
       - name: Smoke Test (Import Check)
         run: |
@@ -34,3 +37,8 @@ jobs:
       - name: Smoke Test (Compile)
         run: |
           python -m compileall bin/ltbox
+
+      - name: Run Unit Tests
+        run: |
+          set PYTHONPATH=bin
+          pytest tests/
