@@ -2,8 +2,10 @@ import sys
 import os
 import pytest
 import subprocess
+import hashlib
+from pathlib import Path
 from unittest.mock import patch, MagicMock
-from ltbox import utils
+from ltbox import utils, crypto, downloader
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../bin')))
 
@@ -45,3 +47,43 @@ class TestUtilities:
     def test_device_string_parsing(self):
         output = "(bootloader) current-slot:a\nall: Done!!"
         assert "current-slot:a" in output
+
+    def test_crypto_pbkdf1_generation(self):
+        salt = b"1234567890123456"
+        key1 = crypto.PBKDF1("OSD", salt, 32, hashlib.sha256, 1000)
+        key2 = crypto.PBKDF1("OSD", salt, 32, hashlib.sha256, 1000)
+
+        assert len(key1) == 32
+        assert key1 == key2
+
+    def test_decrypt_file_invalid_signature(self, tmp_path):
+        bad_file = tmp_path / "bad.enc"
+        bad_file.write_bytes(b"\x00" * 32 + b"garbage")
+        output_file = tmp_path / "output.bin"
+
+        with patch("ltbox.utils.ui"):
+            result = crypto.decrypt_file(str(bad_file), str(output_file))
+
+        assert result is False
+
+    def test_github_asset_selection(self):
+        mock_response = {
+            "assets": [
+                {"name": "tool-linux.zip", "browser_download_url": "http://linux"},
+                {"name": "tool-windows-x64.zip", "browser_download_url": "http://win"},
+                {"name": "tool-macos.zip", "browser_download_url": "http://mac"},
+            ]
+        }
+
+        with patch("requests.get") as mock_get, \
+             patch("ltbox.downloader.download_resource") as mock_dl:
+
+            mock_get.return_value.json.return_value = mock_response
+            mock_get.return_value.status_code = 200
+
+            downloader._download_github_asset(
+                "repo", "tag", ".*windows.*", Path(".")
+            )
+
+            args, _ = mock_dl.call_args
+            assert args[0] == "http://win"
