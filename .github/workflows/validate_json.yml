@@ -39,7 +39,7 @@ jobs:
               except Exception as e:
                   print(f'[ERROR] {file_path}: {e}')
                   has_error = True
-          
+
           if has_error:
               print('JSON syntax errors detected.')
               sys.exit(1)

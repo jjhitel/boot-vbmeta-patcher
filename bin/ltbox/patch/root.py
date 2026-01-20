@@ -8,24 +8,28 @@ from .. import constants as const
 from .. import utils, downloader, device
 from ..i18n import get_string
 
+
 def patch_boot_with_root_algo(
-    work_dir: Path, 
-    magiskboot_exe: Path, 
-    dev: Optional[device.DeviceController] = None, 
+    work_dir: Path,
+    magiskboot_exe: Path,
+    dev: Optional[device.DeviceController] = None,
     gki: bool = False,
     lkm_kernel_version: Optional[str] = None,
     root_type: str = "ksu",
-    skip_lkm_download: bool = False
+    skip_lkm_download: bool = False,
 ) -> Optional[Path]:
-    
+
     img_name = const.FN_BOOT if gki else const.FN_INIT_BOOT
     out_img_name = const.FN_BOOT_ROOT if gki else const.FN_INIT_BOOT_ROOT
-    
+
     patched_boot_path = const.BASE_DIR / out_img_name
     work_img_path = work_dir / img_name
 
     if not work_img_path.exists():
-        print(get_string("img_root_err_img_not_found").format(name=img_name), file=sys.stderr)
+        print(
+            get_string("img_root_err_img_not_found").format(name=img_name),
+            file=sys.stderr,
+        )
         return None
 
     if gki:
@@ -40,13 +44,15 @@ def patch_boot_with_root_algo(
         target_kernel_version = get_kernel_version(work_dir / "kernel")
 
         if not target_kernel_version:
-                print(get_string("img_root_kernel_ver_fail"))
-                return None
+            print(get_string("img_root_kernel_ver_fail"))
+            return None
 
         if not re.match(r"\d+\.\d+\.\d+", target_kernel_version):
-                print(get_string("img_root_kernel_invalid").format(ver=target_kernel_version))
-                return None
-        
+            print(
+                get_string("img_root_kernel_invalid").format(ver=target_kernel_version)
+            )
+            return None
+
         print(get_string("img_root_target_ver").format(ver=target_kernel_version))
 
         kernel_image_path = downloader.get_gki_kernel(target_kernel_version, work_dir)
@@ -64,7 +70,7 @@ def patch_boot_with_root_algo(
         print(get_string("img_root_repack_ok"))
 
         return patched_boot_path
-    
+
     else:
         print(get_string("img_root_step1_init_boot").format(name=img_name))
         utils.run_command([str(magiskboot_exe), "unpack", img_name], cwd=work_dir)
@@ -78,7 +84,7 @@ def patch_boot_with_root_algo(
             try:
                 ksuinit_path = work_dir / "init"
                 kmod_path = work_dir / "kernelsu.ko"
-                
+
                 if root_type == "sukisu":
                     if not lkm_kernel_version:
                         print(get_string("img_root_lkm_no_dev"), file=sys.stderr)
@@ -87,9 +93,9 @@ def patch_boot_with_root_algo(
                     downloader.download_nightly_artifacts(
                         repo=const.SUKISU_REPO,
                         workflow_id=const.SUKISU_WORKFLOW,
-                        manager_name="Spoofed-Manager.zip", 
+                        manager_name="Spoofed-Manager.zip",
                         mapped_name=lkm_kernel_version,
-                        target_dir=work_dir
+                        target_dir=work_dir,
                     )
                 else:
                     downloader.download_ksuinit_release(ksuinit_path)
@@ -99,24 +105,43 @@ def patch_boot_with_root_algo(
                     downloader.get_lkm_kernel_release(kmod_path, lkm_kernel_version)
 
             except Exception as e:
-                print(get_string("img_root_lkm_download_fail").format(e=e), file=sys.stderr)
+                print(
+                    get_string("img_root_lkm_download_fail").format(e=e),
+                    file=sys.stderr,
+                )
                 return None
         else:
             print("Skipping download (files provided)...")
 
         print(get_string("img_root_lkm_patch"))
-        
+
         check_init_cmd = [str(magiskboot_exe), "cpio", "ramdisk.cpio", "exists init"]
-        init_exists_proc = utils.run_command(check_init_cmd, cwd=work_dir, check=False, capture=True)
-        
+        init_exists_proc = utils.run_command(
+            check_init_cmd, cwd=work_dir, check=False, capture=True
+        )
+
         if init_exists_proc.returncode == 0:
             print(get_string("img_root_lkm_backup_init"))
-            utils.run_command([str(magiskboot_exe), "cpio", "ramdisk.cpio", "mv init init.real"], cwd=work_dir)
+            utils.run_command(
+                [str(magiskboot_exe), "cpio", "ramdisk.cpio", "mv init init.real"],
+                cwd=work_dir,
+            )
 
         print(get_string("img_root_lkm_add_files"))
-        utils.run_command([str(magiskboot_exe), "cpio", "ramdisk.cpio", "add 0755 init init"], cwd=work_dir)
-        utils.run_command([str(magiskboot_exe), "cpio", "ramdisk.cpio", "add 0755 kernelsu.ko kernelsu.ko"], cwd=work_dir)
-        
+        utils.run_command(
+            [str(magiskboot_exe), "cpio", "ramdisk.cpio", "add 0755 init init"],
+            cwd=work_dir,
+        )
+        utils.run_command(
+            [
+                str(magiskboot_exe),
+                "cpio",
+                "ramdisk.cpio",
+                "add 0755 kernelsu.ko kernelsu.ko",
+            ],
+            cwd=work_dir,
+        )
+
         print(get_string("img_root_step6_init_boot").format(name=img_name))
         utils.run_command([str(magiskboot_exe), "repack", img_name], cwd=work_dir)
         if not (work_dir / "new-boot.img").exists():
@@ -127,25 +152,31 @@ def patch_boot_with_root_algo(
 
         return patched_boot_path
 
+
 def get_kernel_version(file_path: Union[str, Path]) -> Optional[str]:
     kernel_file = Path(file_path)
     if not kernel_file.exists():
-        print(get_string("img_kv_err_not_found").format(path=file_path), file=sys.stderr)
+        print(
+            get_string("img_kv_err_not_found").format(path=file_path), file=sys.stderr
+        )
         return None
 
     try:
         content = kernel_file.read_bytes()
-        potential_strings = re.findall(b'[ -~]{10,}', content)
-        
+        potential_strings = re.findall(b"[ -~]{10,}", content)
+
         found_version = None
         for string_bytes in potential_strings:
             try:
-                line = string_bytes.decode('ascii', errors='ignore')
-                if 'Linux version ' in line:
-                    base_version_match = re.search(r'(\d+\.\d+\.\d+)', line)
+                line = string_bytes.decode("ascii", errors="ignore")
+                if "Linux version " in line:
+                    base_version_match = re.search(r"(\d+\.\d+\.\d+)", line)
                     if base_version_match:
                         found_version = base_version_match.group(1)
-                        print(get_string("img_kv_found").format(line=line.strip()), file=sys.stderr)
+                        print(
+                            get_string("img_kv_found").format(line=line.strip()),
+                            file=sys.stderr,
+                        )
                         break
             except UnicodeDecodeError:
                 continue

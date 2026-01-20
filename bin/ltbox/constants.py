@@ -2,11 +2,12 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+
 class LTBoxConfig:
     def __init__(self):
         self._loaded = False
         self._config_data: Dict[str, Any] = {}
-        
+
         # --- Base Paths ---
         self.base_dir = Path(__file__).parent.parent.parent.resolve()
         self.ltbox_dir = self.base_dir / "bin" / "ltbox"
@@ -23,13 +24,13 @@ class LTBoxConfig:
         self.output_twrp_dir = self.base_dir / "output_twrp"
         self.backup_dir = self.base_dir / "backup"
         self.work_dir = self.base_dir / "patch_work"
-        
+
         self.backup_boot_dir = self.base_dir / "backup_boot"
         self.backup_init_boot_dir = self.base_dir / "backup_init_boot"
         self.working_boot_dir = self.base_dir / "working_boot"
-        
+
         self.output_anti_rollback_dir = self.base_dir / "output_anti_rollback"
-        
+
         self.image_dir = self.base_dir / "image"
         self.working_dir = self.base_dir / "working"
         self.output_xml_dir = self.base_dir / "output_xml"
@@ -69,13 +70,17 @@ class LTBoxConfig:
 
         if self.config_file.exists():
             try:
-                with open(self.config_file, 'r', encoding='utf-8') as f:
+                with open(self.config_file, "r", encoding="utf-8") as f:
                     self._config_data = json.load(f)
                 self._loaded = True
             except Exception as e:
-                raise RuntimeError(f"[!] Critical Error: Failed to load config.json: {e}")
+                raise RuntimeError(
+                    f"[!] Critical Error: Failed to load config.json: {e}"
+                )
         else:
-            raise RuntimeError(f"[!] Critical Error: Configuration file missing: {self.config_file}")
+            raise RuntimeError(
+                f"[!] Critical Error: Configuration file missing: {self.config_file}"
+            )
 
     def _get_val(self, section: str, key: str, default: Any = None) -> Any:
         self.load()
@@ -84,7 +89,9 @@ class LTBoxConfig:
         except KeyError:
             if default is not None:
                 return default
-            raise RuntimeError(f"[!] Critical Error: Missing configuration key: [{section}][{key}]")
+            raise RuntimeError(
+                f"[!] Critical Error: Missing configuration key: [{section}][{key}]"
+            )
 
     # --- Config Properties ---
 
@@ -101,7 +108,7 @@ class LTBoxConfig:
         try:
             return self._get_val("kernelsu-next", "repo")
         except RuntimeError:
-             return self._get_val("kernelsu-next", "apk_repo")
+            return self._get_val("kernelsu-next", "apk_repo")
 
     @property
     def ksu_apk_tag(self) -> str:
@@ -139,7 +146,7 @@ class LTBoxConfig:
         try:
             return self._get_val("wildkernels", "zip")
         except RuntimeError:
-             return self._get_val("kernelsu-next", "anykernel_zip")
+            return self._get_val("kernelsu-next", "anykernel_zip")
 
     @property
     def edl_loader_filename(self) -> str:
@@ -178,9 +185,13 @@ class LTBoxConfig:
         self.load()
         try:
             cfg_map = self._config_data.get("key_map", {})
-            return {key: self.download_dir / filename for key, filename in cfg_map.items()}
+            return {
+                key: self.download_dir / filename for key, filename in cfg_map.items()
+            }
         except KeyError:
-             raise RuntimeError("[!] Critical Error: Missing configuration section: [key_map]")
+            raise RuntimeError(
+                "[!] Critical Error: Missing configuration section: [key_map]"
+            )
 
     @property
     def country_codes(self) -> Dict[str, str]:
@@ -195,10 +206,12 @@ class LTBoxConfig:
 # --- Singleton Instance ---
 CONF = LTBoxConfig()
 
+
 # --- Config Helper for Downloader ---
 def load_settings_raw() -> Dict[str, Any]:
     CONF.load()
     return CONF._config_data
+
 
 # --- Module Level Exports (Backward Compatibility) ---
 
@@ -265,15 +278,15 @@ try:
 
     EDL_LOADER_FILENAME = CONF.edl_loader_filename
     EDL_LOADER_FILE = CONF.edl_loader_file
-    
+
     PLATFORM_TOOLS_ZIP_URL = CONF.platform_tools_zip_url
     AVB_ARCHIVE_URL = CONF.avb_archive_url
-    
+
     ROW_PATTERN_DOT = CONF.row_pattern_dot
     PRC_PATTERN_DOT = CONF.prc_pattern_dot
     ROW_PATTERN_I = CONF.row_pattern_i
     PRC_PATTERN_I = CONF.prc_pattern_i
-    
+
     KEY_MAP = CONF.key_map
     COUNTRY_CODES = CONF.country_codes
     SORTED_COUNTRY_CODES = CONF.sorted_country_codes

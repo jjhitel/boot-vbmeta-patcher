@@ -5,6 +5,7 @@ from .logger import get_logger
 
 logger = get_logger()
 
+
 class ConsoleUI:
     def echo(self, message: str = "", err: bool = False) -> None:
         if err:
@@ -24,13 +25,14 @@ class ConsoleUI:
     def box_output(self, lines: List[str], err: bool = False) -> None:
         self.echo("", err=err)
         for line in lines:
-             self.echo(line, err=err)
+            self.echo(line, err=err)
         self.echo("", err=err)
 
     def prompt(self, message: str = "") -> str:
         return input(message)
 
     def clear(self) -> None:
-        os.system('cls')
+        os.system("cls")
+
 
 ui = ConsoleUI()

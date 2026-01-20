@@ -3,6 +3,7 @@ from typing import Optional, Callable
 
 from .device import DeviceController
 
+
 @dataclass
 class TaskContext:
     dev: DeviceController

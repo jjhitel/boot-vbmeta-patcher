@@ -29,28 +29,41 @@ except ImportError:
 
 # --- Command Registry ---
 
+
 class CommandRegistry:
     def __init__(self):
         self._commands: Dict[str, Dict[str, Any]] = {}
 
-    def register(self, name: str, title: str, require_dev: bool = True, **default_kwargs):
+    def register(
+        self, name: str, title: str, require_dev: bool = True, **default_kwargs
+    ):
         def decorator(func: Callable):
             self._commands[name] = {
                 "func": func,
                 "title": title,
                 "require_dev": require_dev,
-                "default_kwargs": default_kwargs
+                "default_kwargs": default_kwargs,
             }
             return func
+
         return decorator
 
-    def add(self, name: str, func: Callable, title: str, require_dev: bool = True, **default_kwargs):
+    def add(
+        self,
+        name: str,
+        func: Callable,
+        title: str,
+        require_dev: bool = True,
+        **default_kwargs,
+    ):
         self.register(name, title, require_dev, **default_kwargs)(func)
 
     def get(self, name: str) -> Optional[Dict[str, Any]]:
         return self._commands.get(name)
 
+
 # --- UI Helper Class ---
+
 
 class TerminalMenu:
     def __init__(self, title: str):
@@ -83,7 +96,7 @@ class TerminalMenu:
         ui.echo("\n" + "=" * 78)
         ui.echo(f"   {self.title}")
         ui.echo("=" * 78 + "\n")
-        
+
         for key, text, is_selectable in self.options:
             if is_selectable:
                 ui.echo(f"   {key}. {text}")
@@ -92,7 +105,7 @@ class TerminalMenu:
                     ui.echo(f"  {text}")
                 else:
                     ui.echo("")
-        
+
         ui.echo("\n" + "=" * 78 + "\n")
 
     def ask(self, prompt_msg: str, error_msg: str) -> str:
@@ -101,39 +114,106 @@ class TerminalMenu:
             choice = input(prompt_msg).strip().lower()
             if choice in self.valid_keys:
                 return choice
-            
+
             ui.echo(error_msg)
             input(get_string("press_enter_to_continue"))
 
+
 # --- Menu Data Definitions ---
 
+
 def _get_advanced_menu_data(target_region: str) -> List[Dict[str, Any]]:
-    region_text = get_string("menu_adv_1_row") if target_region == "ROW" else get_string("menu_adv_1_prc")
-    
+    region_text = (
+        get_string("menu_adv_1_row")
+        if target_region == "ROW"
+        else get_string("menu_adv_1_prc")
+    )
+
     return [
-        {"type": "label", "text": get_string('menu_adv_sub_region_dump')},
+        {"type": "label", "text": get_string("menu_adv_sub_region_dump")},
         {"type": "option", "key": "1", "text": region_text, "action": "convert"},
         {"type": "separator"},
-        {"type": "label", "text": get_string('menu_adv_sub_patch_region')},
-        {"type": "option", "key": "2", "text": get_string("menu_adv_2"), "action": "dump_partitions"},
-        {"type": "option", "key": "3", "text": get_string("menu_adv_3"), "action": "edit_dp"},
-        {"type": "option", "key": "4", "text": get_string("menu_adv_4"), "action": "flash_partitions"},
+        {"type": "label", "text": get_string("menu_adv_sub_patch_region")},
+        {
+            "type": "option",
+            "key": "2",
+            "text": get_string("menu_adv_2"),
+            "action": "dump_partitions",
+        },
+        {
+            "type": "option",
+            "key": "3",
+            "text": get_string("menu_adv_3"),
+            "action": "edit_dp",
+        },
+        {
+            "type": "option",
+            "key": "4",
+            "text": get_string("menu_adv_4"),
+            "action": "flash_partitions",
+        },
         {"type": "separator"},
-        {"type": "label", "text": get_string('menu_adv_sub_arb')},
-        {"type": "option", "key": "5", "text": get_string("menu_adv_5"), "action": "read_anti_rollback"},
-        {"type": "option", "key": "6", "text": get_string("menu_adv_6"), "action": "patch_anti_rollback"},
-        {"type": "option", "key": "7", "text": get_string("menu_adv_7"), "action": "write_anti_rollback"},
+        {"type": "label", "text": get_string("menu_adv_sub_arb")},
+        {
+            "type": "option",
+            "key": "5",
+            "text": get_string("menu_adv_5"),
+            "action": "read_anti_rollback",
+        },
+        {
+            "type": "option",
+            "key": "6",
+            "text": get_string("menu_adv_6"),
+            "action": "patch_anti_rollback",
+        },
+        {
+            "type": "option",
+            "key": "7",
+            "text": get_string("menu_adv_7"),
+            "action": "write_anti_rollback",
+        },
         {"type": "separator"},
-        {"type": "label", "text": get_string('menu_adv_sub_xml_flash')},
-        {"type": "option", "key": "8", "text": get_string("menu_adv_8"), "action": "decrypt_xml"},
-        {"type": "option", "key": "9", "text": get_string("task_title_modify_xml_wipe"), "action": "modify_xml_wipe"},
-        {"type": "option", "key": "10", "text": get_string("task_title_modify_xml_nowipe"), "action": "modify_xml"},
-        {"type": "option", "key": "11", "text": get_string("menu_adv_11"), "action": "flash_full_firmware"},
+        {"type": "label", "text": get_string("menu_adv_sub_xml_flash")},
+        {
+            "type": "option",
+            "key": "8",
+            "text": get_string("menu_adv_8"),
+            "action": "decrypt_xml",
+        },
+        {
+            "type": "option",
+            "key": "9",
+            "text": get_string("task_title_modify_xml_wipe"),
+            "action": "modify_xml_wipe",
+        },
+        {
+            "type": "option",
+            "key": "10",
+            "text": get_string("task_title_modify_xml_nowipe"),
+            "action": "modify_xml",
+        },
+        {
+            "type": "option",
+            "key": "11",
+            "text": get_string("menu_adv_11"),
+            "action": "flash_full_firmware",
+        },
         {"type": "separator"},
-        {"type": "label", "text": get_string('menu_adv_sub_nav')},
-        {"type": "option", "key": "b", "text": get_string("menu_back"), "action": "back"},
-        {"type": "option", "key": "x", "text": get_string("menu_main_exit"), "action": "exit"},
+        {"type": "label", "text": get_string("menu_adv_sub_nav")},
+        {
+            "type": "option",
+            "key": "b",
+            "text": get_string("menu_back"),
+            "action": "back",
+        },
+        {
+            "type": "option",
+            "key": "x",
+            "text": get_string("menu_main_exit"),
+            "action": "exit",
+        },
     ]
+
 
 def _get_root_mode_menu_data() -> List[Dict[str, Any]]:
     return [
@@ -144,36 +224,119 @@ def _get_root_mode_menu_data() -> List[Dict[str, Any]]:
         {"type": "option", "key": "x", "text": get_string("menu_main_exit")},
     ]
 
+
 def _get_root_menu_data(gki: bool, root_type: str) -> List[Dict[str, Any]]:
     items = []
     if gki:
-        items.append({"type": "option", "key": "1", "text": get_string("menu_root_1_gki"), "action": "root_device_gki"})
-        items.append({"type": "option", "key": "2", "text": get_string("menu_root_2_gki"), "action": "patch_root_image_file_gki"})
+        items.append(
+            {
+                "type": "option",
+                "key": "1",
+                "text": get_string("menu_root_1_gki"),
+                "action": "root_device_gki",
+            }
+        )
+        items.append(
+            {
+                "type": "option",
+                "key": "2",
+                "text": get_string("menu_root_2_gki"),
+                "action": "patch_root_image_file_gki",
+            }
+        )
     else:
         label_2 = get_string("menu_root_2_lkm")
         if root_type == "sukisu":
             label_2 = label_2.replace("KernelSU Next", "Sukisu Ultra")
-        items.append({"type": "option", "key": "1", "text": get_string("menu_root_1_lkm"), "action": "root_device_lkm"})
-        items.append({"type": "option", "key": "2", "text": label_2, "action": "patch_root_image_file_lkm"})
-    
+        items.append(
+            {
+                "type": "option",
+                "key": "1",
+                "text": get_string("menu_root_1_lkm"),
+                "action": "root_device_lkm",
+            }
+        )
+        items.append(
+            {
+                "type": "option",
+                "key": "2",
+                "text": label_2,
+                "action": "patch_root_image_file_lkm",
+            }
+        )
+
     items.append({"type": "separator"})
-    items.append({"type": "option", "key": "b", "text": get_string("menu_back"), "action": "back"})
-    items.append({"type": "option", "key": "m", "text": get_string("menu_root_m"), "action": "return"})
-    items.append({"type": "option", "key": "x", "text": get_string("menu_main_exit"), "action": "exit"})
+    items.append(
+        {
+            "type": "option",
+            "key": "b",
+            "text": get_string("menu_back"),
+            "action": "back",
+        }
+    )
+    items.append(
+        {
+            "type": "option",
+            "key": "m",
+            "text": get_string("menu_root_m"),
+            "action": "return",
+        }
+    )
+    items.append(
+        {
+            "type": "option",
+            "key": "x",
+            "text": get_string("menu_main_exit"),
+            "action": "exit",
+        }
+    )
     return items
 
-def _get_settings_menu_data(skip_adb_state: str, skip_rb_state: str, target_region: str) -> List[Dict[str, Any]]:
-    region_label = get_string("menu_settings_device_row") if target_region == "ROW" else get_string("menu_settings_device_prc")
-    
+
+def _get_settings_menu_data(
+    skip_adb_state: str, skip_rb_state: str, target_region: str
+) -> List[Dict[str, Any]]:
+    region_label = (
+        get_string("menu_settings_device_row")
+        if target_region == "ROW"
+        else get_string("menu_settings_device_prc")
+    )
+
     return [
         {"type": "option", "key": "1", "text": region_label, "action": "toggle_region"},
-        {"type": "option", "key": "2", "text": get_string("menu_settings_skip_adb").format(state=skip_adb_state), "action": "toggle_adb"},
-        {"type": "option", "key": "3", "text": get_string("menu_settings_skip_rb").format(state=skip_rb_state), "action": "toggle_rollback"},
-        {"type": "option", "key": "4", "text": get_string("menu_settings_lang"), "action": "change_lang"},
-        {"type": "option", "key": "5", "text": get_string("menu_settings_check_update"), "action": "check_update"},
+        {
+            "type": "option",
+            "key": "2",
+            "text": get_string("menu_settings_skip_adb").format(state=skip_adb_state),
+            "action": "toggle_adb",
+        },
+        {
+            "type": "option",
+            "key": "3",
+            "text": get_string("menu_settings_skip_rb").format(state=skip_rb_state),
+            "action": "toggle_rollback",
+        },
+        {
+            "type": "option",
+            "key": "4",
+            "text": get_string("menu_settings_lang"),
+            "action": "change_lang",
+        },
+        {
+            "type": "option",
+            "key": "5",
+            "text": get_string("menu_settings_check_update"),
+            "action": "check_update",
+        },
         {"type": "separator"},
-        {"type": "option", "key": "b", "text": get_string("menu_back"), "action": "back"},
+        {
+            "type": "option",
+            "key": "b",
+            "text": get_string("menu_back"),
+            "action": "back",
+        },
     ]
+
 
 def _get_main_menu_data(target_region: str) -> List[Dict[str, Any]]:
     if target_region == "ROW":
@@ -184,95 +347,168 @@ def _get_main_menu_data(target_region: str) -> List[Dict[str, Any]]:
         install_keep_text = get_string("menu_main_install_keep_prc")
 
     return [
-        {"type": "option", "key": "1", "text": install_wipe_text, "action": "patch_all_wipe"},
-        {"type": "option", "key": "2", "text": install_keep_text, "action": "patch_all"},
+        {
+            "type": "option",
+            "key": "1",
+            "text": install_wipe_text,
+            "action": "patch_all_wipe",
+        },
+        {
+            "type": "option",
+            "key": "2",
+            "text": install_keep_text,
+            "action": "patch_all",
+        },
         {"type": "separator"},
-        {"type": "option", "key": "3", "text": get_string("menu_main_rescue"), "action": "rescue_ota"},
-        {"type": "option", "key": "4", "text": get_string("menu_main_disable_ota"), "action": "disable_ota"},
+        {
+            "type": "option",
+            "key": "3",
+            "text": get_string("menu_main_rescue"),
+            "action": "rescue_ota",
+        },
+        {
+            "type": "option",
+            "key": "4",
+            "text": get_string("menu_main_disable_ota"),
+            "action": "disable_ota",
+        },
         {"type": "separator"},
-        {"type": "option", "key": "5", "text": get_string("menu_main_root"), "action": "menu_root"},
-        {"type": "option", "key": "6", "text": get_string("menu_main_unroot"), "action": "unroot_device"},
-        {"type": "option", "key": "7", "text": get_string("menu_main_rec_flash"), "action": "sign_and_flash_twrp"},
+        {
+            "type": "option",
+            "key": "5",
+            "text": get_string("menu_main_root"),
+            "action": "menu_root",
+        },
+        {
+            "type": "option",
+            "key": "6",
+            "text": get_string("menu_main_unroot"),
+            "action": "unroot_device",
+        },
+        {
+            "type": "option",
+            "key": "7",
+            "text": get_string("menu_main_rec_flash"),
+            "action": "sign_and_flash_twrp",
+        },
         {"type": "separator"},
-        {"type": "option", "key": "0", "text": get_string("menu_settings_title"), "action": "menu_settings"},
-        {"type": "option", "key": "a", "text": get_string("menu_main_adv"), "action": "menu_advanced"},
-        {"type": "option", "key": "x", "text": get_string("menu_main_exit"), "action": "exit"},
+        {
+            "type": "option",
+            "key": "0",
+            "text": get_string("menu_settings_title"),
+            "action": "menu_settings",
+        },
+        {
+            "type": "option",
+            "key": "a",
+            "text": get_string("menu_main_adv"),
+            "action": "menu_advanced",
+        },
+        {
+            "type": "option",
+            "key": "x",
+            "text": get_string("menu_main_exit"),
+            "action": "exit",
+        },
     ]
 
+
 # --- Settings & Init ---
+
 
 def _load_settings() -> Dict[str, Any]:
     if SETTINGS_FILE.exists():
         try:
-            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return {}
     return {}
 
+
 def _save_settings(data: Dict[str, Any]) -> None:
     try:
         current_settings = _load_settings()
         current_settings.update(data)
-        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(current_settings, f, indent=2)
     except Exception as e:
         print(f"Warning: Failed to save settings: {e}", file=sys.stderr)
 
+
 def _check_platform():
     if platform.system() != "Windows":
         print(get_string("err_fatal_windows"), file=sys.stderr)
-        print(get_string("err_current_platform").format(platform=platform.system()), file=sys.stderr)
+        print(
+            get_string("err_current_platform").format(platform=platform.system()),
+            file=sys.stderr,
+        )
         print(get_string("err_aborting"), file=sys.stderr)
         input(get_string("press_enter_to_exit"))
         sys.exit(1)
-    
+
     if platform.machine() != "AMD64":
         print(get_string("err_fatal_amd64"), file=sys.stderr)
-        print(get_string("err_current_arch").format(arch=platform.machine()), file=sys.stderr)
+        print(
+            get_string("err_current_arch").format(arch=platform.machine()),
+            file=sys.stderr,
+        )
         print(get_string("err_arch_unsupported"), file=sys.stderr)
         print(get_string("err_aborting"), file=sys.stderr)
         input(get_string("press_enter_to_exit"))
         sys.exit(1)
 
+
 def setup_console():
     try:
         import ctypes
-        ctypes.windll.kernel32.SetConsoleTitleW(u"LTBox")
+
+        ctypes.windll.kernel32.SetConsoleTitleW("LTBox")
 
         sys.stdout.write("\x1b[8;40;80t")
         sys.stdout.flush()
 
         os.system("mode con: cols=80 lines=40")
-        
+
     except Exception as e:
         print(get_string("warn_set_console_title").format(e=e), file=sys.stderr)
+
 
 def check_path_encoding():
     current_path = str(Path(__file__).parent.parent.resolve())
     if not current_path.isascii():
         ui.clear()
-        ui.box_output([
-            get_string("critical_error_path_encoding"),
-            "-" * 75,
-            get_string("current_path").format(current_path=current_path),
-            "-" * 75,
-            get_string("path_encoding_details_1"),
-            get_string("path_encoding_details_2"),
-            "",
-            get_string("action_required"),
-            get_string("action_required_details"),
-            get_string("example_path")
-        ], err=True)
-        
+        ui.box_output(
+            [
+                get_string("critical_error_path_encoding"),
+                "-" * 75,
+                get_string("current_path").format(current_path=current_path),
+                "-" * 75,
+                get_string("path_encoding_details_1"),
+                get_string("path_encoding_details_2"),
+                "",
+                get_string("action_required"),
+                get_string("action_required_details"),
+                get_string("example_path"),
+            ],
+            err=True,
+        )
+
         input(get_string("press_enter_to_continue"))
         raise RuntimeError(get_string("critical_error_path_encoding"))
 
+
 # --- Task Execution ---
 
-def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Dict[str, Any] = None):
+
+def run_task(
+    command: str,
+    dev: Any,
+    registry: CommandRegistry,
+    extra_kwargs: Dict[str, Any] = None,
+):
     ui.clear()
-    
+
     cmd_info = registry.get(command)
     if not cmd_info:
         raise ToolError(get_string("unknown_command").format(command=command))
@@ -284,10 +520,10 @@ def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Di
 
     try:
         final_kwargs = base_kwargs.copy()
-        
+
         if extra_kwargs:
             final_kwargs.update(extra_kwargs)
-        
+
         if require_dev:
             final_kwargs["dev"] = dev
 
@@ -296,16 +532,20 @@ def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Di
         if isinstance(result, str) and result:
             ui.echo(result)
         elif isinstance(result, tuple) and command == "read_anti_rollback":
-                ui.echo(get_string("act_arb_complete").format(status=result[0]))
-                ui.echo(get_string("act_curr_boot_idx").format(idx=result[1]))
-                ui.echo(get_string("act_curr_vbmeta_idx").format(idx=result[2]))
+            ui.echo(get_string("act_arb_complete").format(status=result[0]))
+            ui.echo(get_string("act_curr_boot_idx").format(idx=result[1]))
+            ui.echo(get_string("act_curr_vbmeta_idx").format(idx=result[2]))
         elif result:
             ui.echo(get_string("act_unhandled_success_result").format(res=result))
 
     except LTBoxError as e:
         ui.box_output([get_string("task_failed").format(title=title), str(e)], err=True)
     except subprocess.CalledProcessError as e:
-        msgs = [get_string("err_cmd_failed").format(cmd=" ".join(e.cmd) if isinstance(e.cmd, list) else e.cmd)]
+        msgs = [
+            get_string("err_cmd_failed").format(
+                cmd=" ".join(e.cmd) if isinstance(e.cmd, list) else e.cmd
+            )
+        ]
         if e.stdout:
             msgs.append(f"{get_string('err_cmd_stdout_header')}\n{e.stdout}")
         if e.stderr:
@@ -319,28 +559,29 @@ def run_task(command: str, dev: Any, registry: CommandRegistry, extra_kwargs: Di
     except KeyboardInterrupt:
         ui.error(get_string("process_cancelled"))
     finally:
-        if dev and hasattr(dev, 'adb'):
+        if dev and hasattr(dev, "adb"):
             dev.adb.force_kill_server()
-        if dev and hasattr(dev, 'fastboot'):
+        if dev and hasattr(dev, "fastboot"):
             dev.fastboot.force_kill_server()
 
         ui.echo("")
         input(get_string("press_enter_to_continue"))
 
+
 def run_info_scan(paths, constants, avb_patch):
     print(get_string("scan_start"))
-    
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_filename = constants.BASE_DIR / f"image_info_{timestamp}.txt"
-    
+
     files_to_scan = []
     for path_str in paths:
         p = Path(path_str)
         if p.is_dir():
             files_to_scan.extend(p.rglob("*.img"))
-        elif p.is_file() and p.suffix.lower() == '.img':
+        elif p.is_file() and p.suffix.lower() == ".img":
             files_to_scan.append(p)
-    
+
     if not files_to_scan:
         print(get_string("scan_no_files"), file=sys.stderr)
         return
@@ -352,33 +593,39 @@ def run_info_scan(paths, constants, avb_patch):
             header = get_string("scan_log_header").format(path=f.resolve())
             logger.info(header)
             print(get_string("scan_scanning_file").format(filename=f.name))
-            
+
             try:
                 cmd = [
-                    str(constants.PYTHON_EXE), 
-                    str(constants.AVBTOOL_PY), 
-                    "info_image", 
-                    "--image", 
-                    str(f)
+                    str(constants.PYTHON_EXE),
+                    str(constants.AVBTOOL_PY),
+                    "info_image",
+                    "--image",
+                    str(f),
                 ]
-                
-                result = avb_patch.utils.run_command(cmd, capture=True, check=False)
-                
-                logger.info(result.stdout.strip())
-                
-                if result.stderr:
-                     logger.info(get_string("scan_log_errors").format(errors=result.stderr.strip()))
 
-                logger.info("\n" + "="*78 + "\n")
+                result = avb_patch.utils.run_command(cmd, capture=True, check=False)
+
+                logger.info(result.stdout.strip())
+
+                if result.stderr:
+                    logger.info(
+                        get_string("scan_log_errors").format(
+                            errors=result.stderr.strip()
+                        )
+                    )
+
+                logger.info("\n" + "=" * 78 + "\n")
             except Exception as e:
                 error_msg = get_string("scan_failed").format(filename=f.name, e=e)
                 print(error_msg, file=sys.stderr)
                 logger.info(error_msg)
-    
+
     print(get_string("scan_complete"))
     print(get_string("scan_saved_to").format(filename=log_filename.name))
 
+
 # --- Menus ---
+
 
 def advanced_menu(dev, registry: CommandRegistry, target_region: str):
     while True:
@@ -386,9 +633,15 @@ def advanced_menu(dev, registry: CommandRegistry, target_region: str):
         menu = TerminalMenu(get_string("menu_adv_title"))
         menu.populate(menu_items)
 
-        action_map = {item["key"]: item["action"] for item in menu_items if item.get("type") == "option"}
+        action_map = {
+            item["key"]: item["action"]
+            for item in menu_items
+            if item.get("type") == "option"
+        }
 
-        choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
+        choice = menu.ask(
+            get_string("prompt_select"), get_string("err_invalid_selection")
+        )
         action = action_map.get(choice)
 
         if action == "back":
@@ -403,9 +656,10 @@ def advanced_menu(dev, registry: CommandRegistry, target_region: str):
                 extras["target_region"] = target_region
             run_task(action, dev, registry, extra_kwargs=extras)
 
+
 def root_menu(dev, registry: CommandRegistry, gki: bool):
     root_type = "ksu"
-    
+
     if not gki:
         while True:
             mode_menu = TerminalMenu(get_string("menu_root_lkm_type_title"))
@@ -414,9 +668,11 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
             mode_menu.add_separator()
             mode_menu.add_option("b", get_string("menu_back"))
             mode_menu.add_option("m", get_string("menu_root_m"))
-            
-            choice = mode_menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
-            
+
+            choice = mode_menu.ask(
+                get_string("prompt_select"), get_string("err_invalid_selection")
+            )
+
             if choice == "1":
                 root_type = "ksu"
                 break
@@ -432,10 +688,16 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
         menu_items = _get_root_menu_data(gki, root_type)
         menu = TerminalMenu(get_string("menu_root_title"))
         menu.populate(menu_items)
-        
-        action_map = {item["key"]: item["action"] for item in menu_items if item.get("type") == "option"}
 
-        choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
+        action_map = {
+            item["key"]: item["action"]
+            for item in menu_items
+            if item.get("type") == "option"
+        }
+
+        choice = menu.ask(
+            get_string("prompt_select"), get_string("err_invalid_selection")
+        )
         action = action_map.get(choice)
 
         if action == "back":
@@ -450,13 +712,16 @@ def root_menu(dev, registry: CommandRegistry, gki: bool):
                 extras["root_type"] = root_type
             run_task(action, dev, registry, extra_kwargs=extras)
 
+
 def root_mode_selection_menu(dev, registry: CommandRegistry):
     while True:
         menu_items = _get_root_mode_menu_data()
         menu = TerminalMenu(get_string("menu_root_mode_title"))
         menu.populate(menu_items)
-        
-        choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
+
+        choice = menu.ask(
+            get_string("prompt_select"), get_string("err_invalid_selection")
+        )
 
         result = None
         if choice == "1":
@@ -471,20 +736,35 @@ def root_mode_selection_menu(dev, registry: CommandRegistry):
         if result == "main":
             return
 
-def settings_menu(dev, registry: CommandRegistry, skip_adb: bool, skip_rollback: bool, target_region: str) -> Tuple[bool, bool, str]:
+
+def settings_menu(
+    dev,
+    registry: CommandRegistry,
+    skip_adb: bool,
+    skip_rollback: bool,
+    target_region: str,
+) -> Tuple[bool, bool, str]:
     while True:
         skip_adb_state = "ON" if skip_adb else "OFF"
         skip_rb_state = "ON" if skip_rollback else "OFF"
-        
-        menu_items = _get_settings_menu_data(skip_adb_state, skip_rb_state, target_region)
+
+        menu_items = _get_settings_menu_data(
+            skip_adb_state, skip_rb_state, target_region
+        )
         menu = TerminalMenu(get_string("menu_settings_title"))
         menu.populate(menu_items)
-        
-        action_map = {item["key"]: item["action"] for item in menu_items if item.get("type") == "option"}
-        
-        choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
+
+        action_map = {
+            item["key"]: item["action"]
+            for item in menu_items
+            if item.get("type") == "option"
+        }
+
+        choice = menu.ask(
+            get_string("prompt_select"), get_string("err_invalid_selection")
+        )
         action = action_map.get(choice)
-        
+
         if action == "back":
             return skip_adb, skip_rollback, target_region
         elif action == "return":
@@ -507,7 +787,7 @@ def settings_menu(dev, registry: CommandRegistry, skip_adb: bool, skip_rollback:
             config_file = APP_DIR / "config.json"
             if config_file.exists():
                 try:
-                    with open(config_file, 'r', encoding='utf-8') as f:
+                    with open(config_file, "r", encoding="utf-8") as f:
                         config_data = json.load(f)
                         current_version = config_data.get("version", "v0.0.0")
                 except Exception:
@@ -515,27 +795,38 @@ def settings_menu(dev, registry: CommandRegistry, skip_adb: bool, skip_rollback:
 
             try:
                 latest_version = utils.get_latest_release_version("miner7222", "LTBox")
-                
-                if latest_version and utils.is_update_available(current_version, latest_version):
+
+                if latest_version and utils.is_update_available(
+                    current_version, latest_version
+                ):
                     ui.echo(get_string("update_avail_title"))
-                    prompt_msg = get_string("update_avail_prompt").format(curr=current_version, new=latest_version)
-                    
+                    prompt_msg = get_string("update_avail_prompt").format(
+                        curr=current_version, new=latest_version
+                    )
+
                     choice = input(prompt_msg).strip().lower()
-                    if choice == 'y':
+                    if choice == "y":
                         ui.echo(get_string("update_open_web"))
                         webbrowser.open("https://github.com/miner7222/LTBox/releases")
                         sys.exit(0)
                 else:
                     if latest_version:
-                        ui.echo(get_string("act_update_not_found").format(version=current_version))
+                        ui.echo(
+                            get_string("act_update_not_found").format(
+                                version=current_version
+                            )
+                        )
                     else:
-                        ui.echo(get_string("act_update_error").format(e="Unknown version"))
-                        
+                        ui.echo(
+                            get_string("act_update_error").format(e="Unknown version")
+                        )
+
             except Exception as e:
                 ui.echo(get_string("act_update_error").format(e=e))
-            
+
             ui.echo("")
             input(get_string("press_enter_to_continue"))
+
 
 def prompt_for_language(force_prompt: bool = False) -> str:
     if not force_prompt:
@@ -546,14 +837,14 @@ def prompt_for_language(force_prompt: bool = False) -> str:
             try:
                 available_languages = i18n.get_available_languages()
                 avail_codes = [code for code, _ in available_languages]
-                
+
                 if saved_lang in avail_codes:
                     return saved_lang
             except Exception:
                 pass
 
     i18n.load_lang("en")
-    
+
     try:
         available_languages = i18n.get_available_languages()
     except RuntimeError as e:
@@ -563,7 +854,7 @@ def prompt_for_language(force_prompt: bool = False) -> str:
 
     menu = TerminalMenu(get_string("menu_lang_title"))
     lang_map = {}
-    
+
     for i, (lang_code, lang_name) in enumerate(available_languages, 1):
         key = str(i)
         lang_map[key] = lang_code
@@ -571,37 +862,46 @@ def prompt_for_language(force_prompt: bool = False) -> str:
 
     prompt = get_string("prompt_select").format(len=len(lang_map))
     error_msg = get_string("err_invalid_selection").format(len=len(lang_map))
-    
+
     choice = menu.ask(prompt, error_msg)
     selected_lang = lang_map[choice]
 
     _save_settings({"language": selected_lang})
-    
+
     return selected_lang
+
 
 def main_loop(device_controller_class, registry: CommandRegistry):
     settings = _load_settings()
-    
+
     skip_adb = False
     skip_rollback = False
     target_region = settings.get("target_region", "PRC")
-    
+
     dev = device_controller_class(skip_adb=skip_adb)
-    
+
     while True:
         menu_items = _get_main_menu_data(target_region)
         menu = TerminalMenu(get_string("menu_main_title"))
         menu.populate(menu_items)
 
-        action_map = {item["key"]: item["action"] for item in menu_items if item.get("type") == "option"}
+        action_map = {
+            item["key"]: item["action"]
+            for item in menu_items
+            if item.get("type") == "option"
+        }
 
-        choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
+        choice = menu.ask(
+            get_string("prompt_select"), get_string("err_invalid_selection")
+        )
         action = action_map.get(choice)
-        
+
         if action == "exit":
             break
         elif action == "menu_settings":
-            skip_adb, skip_rollback, target_region = settings_menu(dev, registry, skip_adb, skip_rollback, target_region)
+            skip_adb, skip_rollback, target_region = settings_menu(
+                dev, registry, skip_adb, skip_rollback, target_region
+            )
         elif action == "menu_root":
             root_mode_selection_menu(dev, registry)
         elif action == "menu_advanced":
@@ -613,33 +913,37 @@ def main_loop(device_controller_class, registry: CommandRegistry):
                 extras["target_region"] = target_region
             run_task(action, dev, registry, extra_kwargs=extras)
 
+
 # --- Singleton Check ---
+
 
 def _acquire_single_instance_mutex() -> Optional[Any]:
     kernel32 = ctypes.windll.kernel32
     mutex_name = "Global\\LTBox_Singleton_Mutex"
 
     mutex = kernel32.CreateMutexW(None, False, mutex_name)
-    
+
     if kernel32.GetLastError() == 183:
         return None
-        
+
     return mutex
 
+
 # --- Entry Point ---
+
 
 def entry_point():
     try:
         _check_platform()
         setup_console()
-        
-        is_info_mode = len(sys.argv) > 1 and sys.argv[1].lower() == 'info'
-        
+
+        is_info_mode = len(sys.argv) > 1 and sys.argv[1].lower() == "info"
+
         if is_info_mode:
             lang_code = "en"
         else:
             lang_code = prompt_for_language()
-            
+
         i18n.load_lang(lang_code)
 
         singleton_mutex = _acquire_single_instance_mutex()
@@ -648,9 +952,9 @@ def entry_point():
             ui.error(get_string("err_already_running"))
             input()
             sys.exit(0)
-        
+
         ui.clear()
-        
+
         from . import utils
 
         current_version = "v0.0.0"
@@ -658,21 +962,25 @@ def entry_point():
 
         if config_file.exists():
             try:
-                with open(config_file, 'r', encoding='utf-8') as f:
+                with open(config_file, "r", encoding="utf-8") as f:
                     config_data = json.load(f)
                     current_version = config_data.get("version", "v0.0.0")
             except Exception:
                 pass
 
         latest_version = utils.get_latest_release_version("miner7222", "LTBox")
-        
-        if latest_version and utils.is_update_available(current_version, latest_version):
+
+        if latest_version and utils.is_update_available(
+            current_version, latest_version
+        ):
             ui.echo(get_string("update_avail_title"))
 
-            prompt_msg = get_string("update_avail_prompt").format(curr=current_version, new=latest_version)
+            prompt_msg = get_string("update_avail_prompt").format(
+                curr=current_version, new=latest_version
+            )
             choice = input(prompt_msg).strip().lower()
-            
-            if choice == 'y':
+
+            if choice == "y":
                 ui.echo(get_string("update_open_web"))
                 webbrowser.open("https://github.com/miner7222/LTBox/releases")
                 sys.exit(0)
@@ -694,33 +1002,148 @@ def entry_point():
 
             registry = CommandRegistry()
 
-            @registry.register("change_language", get_string("lang_changed"), require_dev=False)
+            @registry.register(
+                "change_language", get_string("lang_changed"), require_dev=False
+            )
             def change_language_task():
                 new_lang = prompt_for_language(force_prompt=True)
                 i18n.load_lang(new_lang)
                 return get_string("lang_changed")
 
-            registry.add("convert", actions.convert_region_images, get_string("task_title_convert_rom"), require_dev=True)
-            registry.add("root_device_gki", actions.root_device, get_string("task_title_root_gki"), require_dev=True, gki=True)
-            registry.add("patch_root_image_file_gki", actions.patch_root_image_file, get_string("task_title_root_file_gki"), require_dev=False, gki=True)
-            registry.add("root_device_lkm", actions.root_device, get_string("task_title_root_lkm"), require_dev=True, gki=False)
-            registry.add("patch_root_image_file_lkm", actions.patch_root_image_file, get_string("task_title_root_file_lkm"), require_dev=False, gki=False)
-            registry.add("unroot_device", actions.unroot_device, get_string("task_title_unroot"), require_dev=True)
-            registry.add("sign_and_flash_twrp", actions.sign_and_flash_twrp, get_string("task_title_rec_flash"), require_dev=True)
-            registry.add("disable_ota", actions.disable_ota, get_string("task_title_disable_ota"), require_dev=True)
-            registry.add("rescue_ota", actions.rescue_after_ota, get_string("task_title_rescue"), require_dev=True)
-            registry.add("edit_dp", actions.edit_devinfo_persist, get_string("task_title_patch_devinfo"), require_dev=False)
-            registry.add("dump_partitions", actions.dump_partitions, get_string("task_title_dump_devinfo"), require_dev=True)
-            registry.add("flash_partitions", actions.flash_partitions, get_string("task_title_write_devinfo"), require_dev=True)
-            registry.add("read_anti_rollback", actions.read_anti_rollback_from_device, get_string("task_title_read_arb"), require_dev=True)
-            registry.add("patch_anti_rollback", actions.patch_anti_rollback_in_rom, get_string("task_title_patch_arb"), require_dev=False)
-            registry.add("write_anti_rollback", actions.write_anti_rollback, get_string("task_title_write_arb"), require_dev=True)
-            registry.add("decrypt_xml", actions.decrypt_x_files, get_string("task_title_decrypt_xml"), require_dev=False)
-            registry.add("modify_xml", actions.modify_xml, get_string("task_title_modify_xml_nowipe"), require_dev=False, wipe=0)
-            registry.add("modify_xml_wipe", actions.modify_xml, get_string("task_title_modify_xml_wipe"), require_dev=False, wipe=1)
-            registry.add("flash_full_firmware", actions.flash_full_firmware, get_string("task_title_flash_full_firmware"), require_dev=True)
-            registry.add("patch_all", workflow.patch_all, get_string("task_title_install_nowipe"), require_dev=True, wipe=0)
-            registry.add("patch_all_wipe", workflow.patch_all, get_string("task_title_install_wipe"), require_dev=True, wipe=1)
+            registry.add(
+                "convert",
+                actions.convert_region_images,
+                get_string("task_title_convert_rom"),
+                require_dev=True,
+            )
+            registry.add(
+                "root_device_gki",
+                actions.root_device,
+                get_string("task_title_root_gki"),
+                require_dev=True,
+                gki=True,
+            )
+            registry.add(
+                "patch_root_image_file_gki",
+                actions.patch_root_image_file,
+                get_string("task_title_root_file_gki"),
+                require_dev=False,
+                gki=True,
+            )
+            registry.add(
+                "root_device_lkm",
+                actions.root_device,
+                get_string("task_title_root_lkm"),
+                require_dev=True,
+                gki=False,
+            )
+            registry.add(
+                "patch_root_image_file_lkm",
+                actions.patch_root_image_file,
+                get_string("task_title_root_file_lkm"),
+                require_dev=False,
+                gki=False,
+            )
+            registry.add(
+                "unroot_device",
+                actions.unroot_device,
+                get_string("task_title_unroot"),
+                require_dev=True,
+            )
+            registry.add(
+                "sign_and_flash_twrp",
+                actions.sign_and_flash_twrp,
+                get_string("task_title_rec_flash"),
+                require_dev=True,
+            )
+            registry.add(
+                "disable_ota",
+                actions.disable_ota,
+                get_string("task_title_disable_ota"),
+                require_dev=True,
+            )
+            registry.add(
+                "rescue_ota",
+                actions.rescue_after_ota,
+                get_string("task_title_rescue"),
+                require_dev=True,
+            )
+            registry.add(
+                "edit_dp",
+                actions.edit_devinfo_persist,
+                get_string("task_title_patch_devinfo"),
+                require_dev=False,
+            )
+            registry.add(
+                "dump_partitions",
+                actions.dump_partitions,
+                get_string("task_title_dump_devinfo"),
+                require_dev=True,
+            )
+            registry.add(
+                "flash_partitions",
+                actions.flash_partitions,
+                get_string("task_title_write_devinfo"),
+                require_dev=True,
+            )
+            registry.add(
+                "read_anti_rollback",
+                actions.read_anti_rollback_from_device,
+                get_string("task_title_read_arb"),
+                require_dev=True,
+            )
+            registry.add(
+                "patch_anti_rollback",
+                actions.patch_anti_rollback_in_rom,
+                get_string("task_title_patch_arb"),
+                require_dev=False,
+            )
+            registry.add(
+                "write_anti_rollback",
+                actions.write_anti_rollback,
+                get_string("task_title_write_arb"),
+                require_dev=True,
+            )
+            registry.add(
+                "decrypt_xml",
+                actions.decrypt_x_files,
+                get_string("task_title_decrypt_xml"),
+                require_dev=False,
+            )
+            registry.add(
+                "modify_xml",
+                actions.modify_xml,
+                get_string("task_title_modify_xml_nowipe"),
+                require_dev=False,
+                wipe=0,
+            )
+            registry.add(
+                "modify_xml_wipe",
+                actions.modify_xml,
+                get_string("task_title_modify_xml_wipe"),
+                require_dev=False,
+                wipe=1,
+            )
+            registry.add(
+                "flash_full_firmware",
+                actions.flash_full_firmware,
+                get_string("task_title_flash_full_firmware"),
+                require_dev=True,
+            )
+            registry.add(
+                "patch_all",
+                workflow.patch_all,
+                get_string("task_title_install_nowipe"),
+                require_dev=True,
+                wipe=0,
+            )
+            registry.add(
+                "patch_all_wipe",
+                workflow.patch_all,
+                get_string("task_title_install_wipe"),
+                require_dev=True,
+                wipe=1,
+            )
 
             device_controller_class = device.DeviceController
             constants_module = constants
@@ -734,14 +1157,14 @@ def entry_point():
             sys.exit(1)
 
         check_path_encoding()
-        
+
         if is_info_mode:
             if len(sys.argv) > 2:
                 run_info_scan(sys.argv[2:], constants_module, avb_patch_module)
             else:
                 ui.error(get_string("info_no_files_dragged"))
                 ui.error(get_string("info_drag_files_prompt"))
-            
+
             input(get_string("press_enter_to_exit"))
         else:
             main_loop(device_controller_class, registry)
@@ -754,6 +1177,7 @@ def entry_point():
     except KeyboardInterrupt:
         ui.error(get_string("err_fatal_user_cancel"))
         sys.exit(0)
+
 
 if __name__ == "__main__":
     entry_point()
