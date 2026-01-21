@@ -165,7 +165,7 @@ def test_prc_to_row(fw_pkg, mock_env):
 
     assert out_vb.stat().st_size > 0
 
-    assert (const.BASE_DIR / "vendor_boot.bak.img").exists()
+    assert (const.BACKUP_DIR / "vendor_boot.bak.img").exists()
 
     print(
         f"\n[PASS] Successfully converted Real Firmware to ROW. Output size: {out_vb.stat().st_size} bytes"
