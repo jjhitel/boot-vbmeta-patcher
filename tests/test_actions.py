@@ -1,13 +1,17 @@
 import os
+import re
 import shutil
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock, patch
 
 import pytest
 from ltbox import constants as const
+from ltbox import downloader, utils
 from ltbox.actions import edl
 from ltbox.actions import xml as xml_action
+from ltbox.actions.root import GkiRootStrategy, LkmRootStrategy
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../bin")))
 
@@ -170,3 +174,182 @@ def test_prc_to_row(fw_pkg, mock_env):
     print(
         f"\n[PASS] Successfully converted Real Firmware to ROW. Output size: {out_vb.stat().st_size} bytes"
     )
+
+
+def test_root_gki(fw_pkg, tmp_path):
+    if not fw_pkg:
+        pytest.skip("Firmware package not available")
+
+    boot_img = fw_pkg.get("boot.img")
+    if not boot_img:
+        pytest.skip("boot.img not found in firmware package")
+
+    mock_dirs = {
+        "TOOLS_DIR": tmp_path / "bin" / "tools",
+        "DOWNLOAD_DIR": tmp_path / "bin" / "download",
+        "OUTPUT_ROOT_DIR": tmp_path / "output" / "root",
+        "IMAGE_DIR": tmp_path / "images",
+        "BASE_DIR": tmp_path / "base",
+    }
+    for d in mock_dirs.values():
+        d.mkdir(parents=True, exist_ok=True)
+
+    with patch.multiple("ltbox.constants", **mock_dirs):
+        print("\n[INFO] [GKI] Ensuring magiskboot (Real Download)...")
+        downloader.ensure_magiskboot()
+
+        magiskboot_exe = list(mock_dirs["DOWNLOAD_DIR"].glob("magiskboot.exe"))
+        if not magiskboot_exe:
+            magiskboot_exe = list(mock_dirs["TOOLS_DIR"].glob("magiskboot.exe"))
+
+        if not magiskboot_exe:
+            pass
+
+        strategy = GkiRootStrategy()
+
+        print("[INFO] [GKI] Downloading resources (Manager APK)...")
+        if not strategy.download_resources():
+            pytest.fail("Failed to download GKI resources")
+
+        work_dir = tmp_path / "work_gki"
+        work_dir.mkdir()
+
+        target_boot = work_dir / "boot.img"
+        shutil.copy(boot_img, target_boot)
+
+        print("[INFO] [GKI] Running ACTUAL patch process...")
+        try:
+            patched_path = strategy.patch(work_dir, dev=None)
+        except Exception as e:
+            pytest.fail(f"GKI Patching failed with real tools: {e}")
+
+        assert patched_path.exists(), "Patched boot image not returned"
+        assert patched_path.stat().st_size > 0, "Patched boot image is empty"
+        print(f"[INFO] [GKI] Patch success: {patched_path}")
+
+        print("[INFO] [GKI] Finalizing (Signing)...")
+        final_output = strategy.finalize_patch(
+            patched_path, mock_dirs["OUTPUT_ROOT_DIR"], mock_dirs["BASE_DIR"]
+        )
+
+        assert final_output.exists()
+        assert final_output.name == "boot.img"
+        print(f"[PASS] GKI Integration Test Complete. Output: {final_output}")
+
+
+def extract_kernel_version_from_img(boot_img_path, magiskboot_exe, work_dir):
+    unpack_dir = work_dir / "unpack_for_ver"
+    if unpack_dir.exists():
+        shutil.rmtree(unpack_dir)
+    unpack_dir.mkdir()
+
+    shutil.copy(boot_img_path, unpack_dir / "boot.img")
+
+    try:
+        subprocess.run(
+            [str(magiskboot_exe), "unpack", "boot.img"],
+            cwd=str(unpack_dir),
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to unpack boot image for version check: {e}")
+
+    kernel_file = unpack_dir / "kernel"
+    if not kernel_file.exists():
+        raise FileNotFoundError("Kernel file not found after unpacking boot.img")
+
+    content = kernel_file.read_bytes()
+    match = re.search(rb"Linux version ([0-9]+\.[0-9]+\.[0-9]+)", content)
+    if match:
+        version = match.group(1).decode("utf-8")
+        return version
+
+    raise ValueError("Could not find Linux version string in kernel binary")
+
+
+def test_root_lkm(fw_pkg, tmp_path):
+    if not fw_pkg:
+        pytest.skip("Firmware package not available")
+
+    boot_img = fw_pkg.get("boot.img")
+    vbmeta_img = fw_pkg.get("vbmeta.img")
+
+    if not boot_img or not vbmeta_img:
+        pytest.skip("Required images (boot/init_boot, vbmeta) missing")
+
+    mock_dirs = {
+        "TOOLS_DIR": tmp_path / "bin" / "tools",
+        "DOWNLOAD_DIR": tmp_path / "bin" / "download",
+        "OUTPUT_ROOT_LKM_DIR": tmp_path / "output" / "root_lkm",
+        "IMAGE_DIR": tmp_path / "images",
+        "BASE_DIR": tmp_path / "base",
+    }
+    for d in mock_dirs.values():
+        d.mkdir(parents=True, exist_ok=True)
+
+    with patch.multiple("ltbox.constants", **mock_dirs):
+        print("\n[INFO] [LKM] Ensuring magiskboot (Real Download)...")
+        downloader.ensure_magiskboot()
+
+        magiskboot_exe = utils.get_platform_executable("magiskboot")
+        if not magiskboot_exe.exists():
+            found = list(mock_dirs["DOWNLOAD_DIR"].glob("*magiskboot*.exe"))
+            if found:
+                magiskboot_exe = found[0]
+            else:
+                pytest.fail("magiskboot executable not found after ensure_magiskboot")
+
+        print(f"[INFO] [LKM] Extracting kernel version from {boot_img.name}...")
+        try:
+            detected_version = extract_kernel_version_from_img(
+                boot_img, magiskboot_exe, tmp_path
+            )
+            print(f"[INFO] [LKM] Detected Kernel Version: {detected_version}")
+        except Exception as e:
+            pytest.fail(f"Failed to extract kernel version: {e}")
+
+        strategy = LkmRootStrategy()
+
+        strategy.staging_dir = mock_dirs["TOOLS_DIR"] / "lkm_staging"
+        strategy.staging_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"[INFO] [LKM] Downloading resources for kernel {detected_version}...")
+
+        if not strategy.download_resources(detected_version):
+            pytest.fail(f"Failed to download LKM resources for {detected_version}")
+
+        assert (strategy.staging_dir / "init").exists()
+        assert (strategy.staging_dir / "kernelsu.ko").exists()
+
+        work_dir = tmp_path / "work_lkm"
+        work_dir.mkdir()
+
+        vbmeta_bak = mock_dirs["BASE_DIR"] / const.FN_VBMETA_BAK
+        shutil.copy(vbmeta_img, vbmeta_bak)
+
+        target_init_boot = work_dir / "init_boot.img"
+        shutil.copy(boot_img, target_init_boot)
+
+        print("[INFO] [LKM] Running ACTUAL patch process...")
+        try:
+            patched_path = strategy.patch(
+                work_dir, dev=None, lkm_kernel_version=detected_version
+            )
+        except Exception as e:
+            pytest.fail(f"LKM Patching failed with real tools: {e}")
+
+        assert patched_path.exists()
+        print(f"[INFO] [LKM] Patch success: {patched_path}")
+
+        print("[INFO] [LKM] Finalizing (AVB Chaining)...")
+        final_output = strategy.finalize_patch(
+            patched_path, mock_dirs["OUTPUT_ROOT_LKM_DIR"], mock_dirs["BASE_DIR"]
+        )
+
+        assert final_output.exists()
+        assert final_output.name == "init_boot.img"
+        assert (mock_dirs["OUTPUT_ROOT_LKM_DIR"] / "vbmeta.img").exists()
+
+        print(f"[PASS] LKM Integration Test Complete. Output: {final_output}")
