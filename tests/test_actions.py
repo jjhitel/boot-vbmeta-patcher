@@ -113,3 +113,43 @@ def test_xml_persist_check(fw_pkg):
     p = next((x for x in root.findall("program") if x.get("label") == "persist"), None)
     if p:
         assert p.get("filename", "") == ""
+
+def test_prc_to_row(fw_pkg, mock_env):
+    if not fw_pkg:
+        pytest.skip("Firmware package not available (Download skipped or failed)")
+
+    img_dir = mock_env["IMAGE_DIR"]
+    output_dir = mock_env["OUTPUT_DIR"]
+
+    real_vb = fw_pkg.get("vendor_boot.img")
+    real_vbmeta = fw_pkg.get("vbmeta.img")
+
+    if not real_vb or not real_vbmeta:
+        pytest.skip("Required images (vendor_boot.img, vbmeta.img) not found in firmware package")
+
+    shutil.copy(real_vb, img_dir / "vendor_boot.img")
+    shutil.copy(real_vbmeta, img_dir / "vbmeta.img")
+
+    mock_dev = MagicMock()
+    mock_dev.skip_adb = True
+
+    with patch("ltbox.utils.run_command") as mock_run:
+        from ltbox.actions import region
+
+        region.convert_region_images(
+            dev=mock_dev,
+            target_region="ROW",
+            on_log=print
+        )
+
+    out_vb = output_dir / "vendor_boot.img"
+    out_vbmeta = output_dir / "vbmeta.img"
+
+    assert out_vb.exists(), "Output vendor_boot.img was not created"
+    assert out_vbmeta.exists(), "Output vbmeta.img was not created"
+
+    assert out_vb.stat().st_size > 0
+
+    assert (const.BASE_DIR / "vendor_boot.bak.img").exists()
+
+    print(f"\n[PASS] Successfully converted Real Firmware to ROW. Output size: {out_vb.stat().st_size} bytes")
