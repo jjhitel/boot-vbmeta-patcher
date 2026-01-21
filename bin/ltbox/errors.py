@@ -1,5 +1,8 @@
+from typing import Optional
+
+
 class LTBoxError(Exception):
-    def __init__(self, message: str, original_error: Exception = None):
+    def __init__(self, message: str, original_error: Optional[BaseException] = None):
         super().__init__(message)
         self.original_error = original_error
 

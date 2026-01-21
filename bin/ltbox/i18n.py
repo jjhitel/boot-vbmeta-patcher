@@ -1,13 +1,13 @@
 import json
 import sys
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 
 APP_DIR = Path(__file__).parent.resolve()
 LANG_DIR = APP_DIR / "lang"
 
-_lang_data = {}
-_fallback_data = {}
+_lang_data: Dict[str, Any] = {}
+_fallback_data: Dict[str, Any] = {}
 
 
 def get_available_languages() -> List[Tuple[str, str]]:

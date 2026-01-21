@@ -64,10 +64,10 @@ def extract_archive_files(archive_path: Path, extract_map: Dict[str, Path]) -> N
                             )
         else:
             with zipfile.ZipFile(archive_path, "r") as zf:
-                for member in zf.infolist():
-                    if member.filename in extract_map:
-                        target_path = extract_map[member.name]
-                        with zf.open(member) as source, open(
+                for zip_member in zf.infolist():
+                    if zip_member.filename in extract_map:
+                        target_path = extract_map[zip_member.filename]
+                        with zf.open(zip_member) as source, open(
                             target_path, "wb"
                         ) as target:
                             shutil.copyfileobj(source, target)

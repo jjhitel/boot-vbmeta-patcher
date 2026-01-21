@@ -27,6 +27,7 @@ def get_latest_release_version(repo_owner: str, repo_name: str) -> Optional[str]
                 return tag
     except Exception:
         return None
+    return None
 
 
 def is_update_available(current: str, latest: str) -> bool:

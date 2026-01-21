@@ -164,7 +164,7 @@ def patch_chained_image_rollback(
 
         key_file = None
         if "pubkey_sha1" in info:
-            key_file = const.KEY_MAP.get(info["pubkey_sha1"])
+            key_file = const.KEY_MAP.get(str(info["pubkey_sha1"]))
             if not key_file:
                 raise KeyError(
                     get_string("img_err_unknown_key").format(

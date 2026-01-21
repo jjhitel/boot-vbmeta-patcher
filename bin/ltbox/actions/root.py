@@ -4,7 +4,7 @@ import subprocess
 import zipfile
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .. import constants as const
 from .. import device, downloader, utils
@@ -64,7 +64,7 @@ class RootStrategy(ABC):
         work_dir: Path,
         dev: Optional[device.DeviceController] = None,
         lkm_kernel_version: Optional[str] = None,
-    ) -> Path:
+    ) -> Optional[Path]:
         pass
 
     @abstractmethod
@@ -131,7 +131,7 @@ class LkmRootStrategy(RootStrategy):
         self.root_type = root_type
         self.is_nightly = False
         self.workflow_id = None
-        self.repo_config = {}
+        self.repo_config: Dict[str, Any] = {}
         self.staging_dir = const.TOOLS_DIR / "lkm_staging"
 
     @property
@@ -177,7 +177,9 @@ class LkmRootStrategy(RootStrategy):
     def _prompt_workflow(self, root_name: str, default_id: str) -> str:
         utils.ui.clear()
         msg_enter = get_string("prompt_workflow_id").replace("{name}", root_name)
-        msg_default = get_string("prompt_workflow_default").replace("{id}", default_id)
+        msg_default = get_string("prompt_workflow_default").replace(
+            "{id}", str(default_id)
+        )
 
         utils.ui.echo("-" * 60)
         utils.ui.echo(msg_enter)
@@ -318,7 +320,7 @@ class LkmRootStrategy(RootStrategy):
         work_dir: Path,
         dev: Optional[device.DeviceController] = None,
         lkm_kernel_version: Optional[str] = None,
-    ) -> Path:
+    ) -> Optional[Path]:
         magiskboot_exe = utils.get_platform_executable("magiskboot")
         ensure_magiskboot()
 
@@ -755,7 +757,7 @@ def unroot_device(dev: device.DeviceController) -> None:
     gki_exists = gki_boot_file.exists()
     lkm_exists = lkm_init_boot_file.exists() and lkm_vbmeta_file.exists()
 
-    selected_strategy = None
+    selected_strategy: Optional[RootStrategy] = None
 
     if gki_exists and lkm_exists:
         os.system("cls")
@@ -820,45 +822,50 @@ def unroot_device(dev: device.DeviceController) -> None:
     except Exception as e:
         utils.ui.echo(get_string("act_warn_prog_load").format(e=e))
 
-    try:
-        partition_map = selected_strategy.get_partition_map(suffix)
+    if selected_strategy:
+        try:
+            partition_map = selected_strategy.get_partition_map(suffix)
 
-        if isinstance(selected_strategy, LkmRootStrategy):
-            utils.ui.echo(get_string("act_unroot_step4_lkm"))
+            if isinstance(selected_strategy, LkmRootStrategy):
+                utils.ui.echo(get_string("act_unroot_step4_lkm"))
 
-            target_init_boot = partition_map["main"]
-            edl.flash_partition_target(dev, port, target_init_boot, lkm_init_boot_file)
-            utils.ui.echo(
-                get_string("act_flash_img").format(
-                    filename=lkm_init_boot_file.name, part=target_init_boot
+                target_init_boot = partition_map["main"]
+                edl.flash_partition_target(
+                    dev, port, target_init_boot, lkm_init_boot_file
                 )
-            )
-
-            target_vbmeta = partition_map["vbmeta"]
-            edl.flash_partition_target(dev, port, target_vbmeta, lkm_vbmeta_file)
-            utils.ui.echo(
-                get_string("act_flash_img").format(
-                    filename=lkm_vbmeta_file.name, part=target_vbmeta
+                utils.ui.echo(
+                    get_string("act_flash_img").format(
+                        filename=lkm_init_boot_file.name, part=target_init_boot
+                    )
                 )
-            )
 
-        elif isinstance(selected_strategy, GkiRootStrategy):
-            target_boot = partition_map["main"]
-            utils.ui.echo(get_string("act_unroot_step4_gki").format(part=target_boot))
-
-            edl.flash_partition_target(dev, port, target_boot, gki_boot_file)
-            utils.ui.echo(
-                get_string("act_flash_img").format(
-                    filename=gki_boot_file.name, part=target_boot
+                target_vbmeta = partition_map["vbmeta"]
+                edl.flash_partition_target(dev, port, target_vbmeta, lkm_vbmeta_file)
+                utils.ui.echo(
+                    get_string("act_flash_img").format(
+                        filename=lkm_vbmeta_file.name, part=target_vbmeta
+                    )
                 )
-            )
 
-        utils.ui.echo(get_string("act_reset_sys"))
-        dev.edl.reset(port)
+            elif isinstance(selected_strategy, GkiRootStrategy):
+                target_boot = partition_map["main"]
+                utils.ui.echo(
+                    get_string("act_unroot_step4_gki").format(part=target_boot)
+                )
 
-    except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
-        utils.ui.error(get_string("act_err_edl_write").format(e=e))
-        raise
+                edl.flash_partition_target(dev, port, target_boot, gki_boot_file)
+                utils.ui.echo(
+                    get_string("act_flash_img").format(
+                        filename=gki_boot_file.name, part=target_boot
+                    )
+                )
+
+            utils.ui.echo(get_string("act_reset_sys"))
+            dev.edl.reset(port)
+
+        except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as e:
+            utils.ui.error(get_string("act_err_edl_write").format(e=e))
+            raise
 
     utils.ui.echo(get_string("act_unroot_finish"))
 

@@ -1,4 +1,3 @@
-import ctypes
 import json
 import os
 import platform
@@ -68,7 +67,7 @@ class CommandRegistry:
 class TerminalMenu:
     def __init__(self, title: str):
         self.title = title
-        self.options: List[Tuple[str, str, bool]] = []
+        self.options: List[Tuple[Optional[str], str, bool]] = []
         self.valid_keys: List[str] = []
 
     def add_option(self, key: str, text: str) -> None:
@@ -463,7 +462,8 @@ def setup_console():
     try:
         import ctypes
 
-        ctypes.windll.kernel32.SetConsoleTitleW("LTBox")
+        if sys.platform == "win32":
+            ctypes.windll.kernel32.SetConsoleTitleW("LTBox")
 
         sys.stdout.write("\x1b[8;40;80t")
         sys.stdout.flush()
@@ -505,7 +505,7 @@ def run_task(
     command: str,
     dev: Any,
     registry: CommandRegistry,
-    extra_kwargs: Dict[str, Any] = None,
+    extra_kwargs: Optional[Dict[str, Any]] = None,
 ):
     ui.clear()
 
@@ -778,7 +778,9 @@ def settings_menu(
         elif action == "toggle_rollback":
             skip_rollback = not skip_rollback
         elif action == "change_lang":
-            registry.get("change_language")["func"]()
+            cmd_info = registry.get("change_language")
+            if cmd_info:
+                cmd_info["func"]()
         elif action == "check_update":
             ui.clear()
             ui.echo(get_string("act_update_checking"))
@@ -918,6 +920,11 @@ def main_loop(device_controller_class, registry: CommandRegistry):
 
 
 def _acquire_single_instance_mutex() -> Optional[Any]:
+    import ctypes
+
+    if sys.platform != "win32":
+        return "Non-Windows-Mutex"
+
     kernel32 = ctypes.windll.kernel32
     mutex_name = "Global\\LTBox_Singleton_Mutex"
 
