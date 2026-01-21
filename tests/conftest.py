@@ -70,13 +70,23 @@ def fw_pkg(tmp_path_factory):
         print("\n[INFO] Starting download...", flush=True)
         try:
             dl = Pypdl()
+
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )
+            }
+
             dl.start(
                 QFIL_URL,
                 file_path=str(ARCHIVE),
-                segments=10,
+                segments=4,
                 display=True,
                 block=True,
-                retries=3,
+                retries=5,
+                headers=headers,
             )
             print(
                 f"\n[INFO] Download Complete! Size: {ARCHIVE.stat().st_size / (1024**3):.2f} GB",
