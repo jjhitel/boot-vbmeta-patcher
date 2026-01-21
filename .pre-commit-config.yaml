@@ -12,17 +12,17 @@ repos:
       - id: isort
         name: isort
         args: ["--profile", "black"]
-        files: ^bin/
+        files: ^(bin|tests)/
 
   - repo: https://github.com/psf/black
     rev: 26.1.0
     hooks:
       - id: black
-        files: ^bin/
+        files: ^(bin|tests)/
 
   - repo: https://github.com/pycqa/flake8
     rev: 7.3.0
     hooks:
       - id: flake8
         args: [--max-line-length=127, --extend-ignore=E203]
-        files: ^bin/
+        files: ^(bin|tests)/

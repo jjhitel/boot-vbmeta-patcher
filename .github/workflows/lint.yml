@@ -4,9 +4,11 @@ on:
   push:
     paths:
       - 'bin/**/*.py'
+      - 'tests/**/*.py'
   pull_request:
     paths:
       - 'bin/**/*.py'
+      - 'tests/**/*.py'
 
 jobs:
   lint:
