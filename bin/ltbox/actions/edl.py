@@ -3,13 +3,13 @@ import subprocess
 import time
 import traceback
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
 
-from . import xml
 from .. import constants as const
-from .. import utils, device
-from ..partition import ensure_params_or_fail
+from .. import device, utils
 from ..i18n import get_string
+from ..partition import ensure_params_or_fail
+from . import xml
 
 
 def ensure_loader_file() -> None:
@@ -347,7 +347,7 @@ def _select_flash_xmls(skip_dp: bool = False) -> Tuple[List[Path], List[Path]]:
             continue
         if name == "rawprogram0.xml":
             continue
-        raw_xmls.append(xml)
+        raw_xmls.append(xml_file)
 
     persist_write_xml = const.IMAGE_DIR / "rawprogram_write_persist_unsparse0.xml"
     persist_save_xml = const.IMAGE_DIR / "rawprogram_save_persist_unsparse0.xml"
