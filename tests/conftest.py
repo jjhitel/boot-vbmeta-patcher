@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import py7zr
 import pytest
-from ltbox import downloader
+from ltbox import downloader, i18n
 from pypdl import Pypdl
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../bin")))
@@ -18,6 +18,11 @@ CACHE_DIR = Path(__file__).parent / "data"
 ARCHIVE = CACHE_DIR / "qfil_archive.7z"
 EXTRACT_DIR = CACHE_DIR / "extracted"
 URL_RECORD_FILE = CACHE_DIR / "url.txt"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_language():
+    i18n.load_lang("en")
 
 
 @pytest.fixture(scope="session", autouse=True)
