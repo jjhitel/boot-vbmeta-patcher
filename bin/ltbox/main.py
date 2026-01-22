@@ -4,6 +4,7 @@ import platform
 import subprocess
 import sys
 import webbrowser
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -29,20 +30,34 @@ except ImportError:
 # --- Command Registry ---
 
 
+@dataclass(frozen=True)
+class CommandSpec:
+    func: Callable
+    title: str
+    require_dev: bool = True
+    default_kwargs: Dict[str, Any] = field(default_factory=dict)
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return getattr(self, key)
+        except AttributeError as exc:
+            raise KeyError(key) from exc
+
+
 class CommandRegistry:
     def __init__(self):
-        self._commands: Dict[str, Dict[str, Any]] = {}
+        self._commands: Dict[str, CommandSpec] = {}
 
     def register(
         self, name: str, title: str, require_dev: bool = True, **default_kwargs
     ):
         def decorator(func: Callable):
-            self._commands[name] = {
-                "func": func,
-                "title": title,
-                "require_dev": require_dev,
-                "default_kwargs": default_kwargs,
-            }
+            self._commands[name] = CommandSpec(
+                func=func,
+                title=title,
+                require_dev=require_dev,
+                default_kwargs=default_kwargs,
+            )
             return func
 
         return decorator
@@ -57,7 +72,7 @@ class CommandRegistry:
     ):
         self.register(name, title, require_dev, **default_kwargs)(func)
 
-    def get(self, name: str) -> Optional[Dict[str, Any]]:
+    def get(self, name: str) -> Optional[CommandSpec]:
         return self._commands.get(name)
 
 
