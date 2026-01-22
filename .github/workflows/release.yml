@@ -99,13 +99,16 @@ jobs:
         run: |
           $archive = "LTBox-win_amd64-$($env:TAG_NAME).zip"
           $excludes = @(
-            ".git/*",
-            ".github/*",
+            ".git",
+            ".git\\*",
+            ".github",
+            ".github\\*",
             ".gitignore",
             ".gitattributes",
             ".editorconfig",
             ".pre-commit-config.yaml",
-            "tests/*"
+            "tests",
+            "tests\\*"
           )
 
           $excludeArgs = $excludes | ForEach-Object { "-xr!$_" }
