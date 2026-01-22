@@ -24,7 +24,7 @@ def _copy_firmware_xml(fw_pkg, image_dir):
 def _get_first_program(xml_path):
     root = ET.parse(xml_path).getroot()
     program = next((p for p in root.findall("program") if p.get("label")), None)
-    if not program:
+    if program is None:
         pytest.skip("No program entries found in firmware XML")
     return program
 
