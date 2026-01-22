@@ -59,6 +59,8 @@ def load_lang(lang_code: str = "en"):
 
 
 def get_string(key: str, default: str = "") -> str:
+    if not _fallback_data:
+        load_lang("en")
     val = _lang_data.get(key, _fallback_data.get(key, default))
     if val:
         return val
