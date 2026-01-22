@@ -2,6 +2,8 @@ name: Windows Smoke Test & Unit Test
 
 on:
   push:
+    branches:
+      - '**'
     tags:
       - 'v*'
     paths:
