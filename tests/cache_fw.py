@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import shutil
+import stat
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -39,6 +40,20 @@ TARGETS = [
 ]
 
 
+def _handle_remove_readonly(
+    func: Callable[[str], None], path: str, exc_info: object
+) -> None:
+    if isinstance(exc_info[1], PermissionError):
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+        return
+    raise exc_info[1]
+
+
+def _safe_rmtree(path: Path) -> None:
+    shutil.rmtree(path, onerror=_handle_remove_readonly)
+
+
 def read_cached_url() -> str:
     if not URL_RECORD_FILE.exists():
         return ""
@@ -54,7 +69,7 @@ def reset_cache_if_url_changed(cached_url: str) -> None:
         if ARCHIVE.exists():
             ARCHIVE.unlink()
         if EXTRACT_DIR.exists():
-            shutil.rmtree(EXTRACT_DIR)
+            _safe_rmtree(EXTRACT_DIR)
         if URL_RECORD_FILE.exists():
             URL_RECORD_FILE.unlink()
 
@@ -247,6 +262,8 @@ def _download_archive() -> None:
 
 def _extract_files() -> None:
     print("\n[INFO] Extracting necessary files...", flush=True)
+    if EXTRACT_DIR.exists():
+        _safe_rmtree(EXTRACT_DIR)
     EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -270,7 +287,7 @@ def _extract_files() -> None:
 
     except Exception as e:
         if EXTRACT_DIR.exists():
-            shutil.rmtree(EXTRACT_DIR)
+            _safe_rmtree(EXTRACT_DIR)
         raise e
 
 
