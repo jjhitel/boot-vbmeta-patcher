@@ -302,7 +302,7 @@ def ensure_magiskboot() -> Path:
     return _ensure_tool_from_github_release(
         tool_name="magiskboot",
         exe_name_in_zip="magiskboot.exe",
-        repo_url=mb_config.get("repo_url"),
+        repo_url=mb_config.get("repo"),
         tag=mb_config.get("tag"),
         asset_patterns=asset_patterns,
     )

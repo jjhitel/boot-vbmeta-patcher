@@ -98,8 +98,8 @@ class LTBoxConfig:
     # --- Config Properties ---
 
     @property
-    def magiskboot_repo_url(self) -> str:
-        return self._get_val("magiskboot", "repo_url")
+    def magiskboot_repo(self) -> str:
+        return self._get_val("magiskboot", "repo")
 
     @property
     def magiskboot_tag(self) -> str:
@@ -276,7 +276,7 @@ QSAHARASERVER_EXE = CONF.qsaharaserver_exe
 EDL_EXE = CONF.edl_exe
 
 try:
-    MAGISKBOOT_REPO_URL = CONF.magiskboot_repo_url
+    MAGISKBOOT_REPO = CONF.magiskboot_repo
     MAGISKBOOT_TAG = CONF.magiskboot_tag
     KSU_APK_REPO = CONF.ksu_apk_repo
     KSU_APK_TAG = CONF.ksu_apk_tag

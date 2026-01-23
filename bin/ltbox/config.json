@@ -6,7 +6,7 @@
     "openssl_url": "https://download.firedaemon.com/FireDaemon-OpenSSL/openssl-3.5.4.zip"
   },
   "magiskboot": {
-    "repo_url": "https://github.com/PinNaCode/magiskboot_build",
+    "repo": "PinNaCode/magiskboot_build",
     "tag": "last-ci"
   },
   "magisk": {
