@@ -170,6 +170,9 @@ def patch_boot_with_root_algo(
                 + "\n",
                 encoding="utf-8",
             )
+            ramdisk_backup = work_dir / "ramdisk.cpio.orig"
+            if not ramdisk_backup.exists():
+                shutil.copy(work_dir / "ramdisk.cpio", ramdisk_backup)
             utils.run_command(
                 [str(magiskboot_exe), "compress=xz", "magisk", "magisk.xz"],
                 cwd=work_dir,
