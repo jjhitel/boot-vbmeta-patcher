@@ -251,19 +251,21 @@ def patch_vbmeta_image_rollback(
         raise
 
 
-def process_boot_image_avb(image_to_process: Path, gki: bool = False) -> None:
+def process_boot_image_avb(
+    image_to_process: Path,
+    gki: bool = False,
+    backup_dir: Optional[Path] = None,
+) -> None:
     utils.ui.info(get_string("img_verify_boot"))
 
     bak_name = "boot.bak.img" if gki else "init_boot.bak.img"
-    boot_bak_img = const.BASE_DIR / bak_name
+    base_dir = backup_dir or const.BASE_DIR
+    boot_bak_img = base_dir / bak_name
 
     if not boot_bak_img.exists():
-        utils.ui.error(
-            get_string("img_err_boot_bak_missing").format(name=boot_bak_img.name)
-        )
-        raise FileNotFoundError(
-            get_string("img_err_boot_bak_missing").format(name=boot_bak_img.name)
-        )
+        msg = get_string("img_err_boot_bak_missing").format(name=boot_bak_img.name)
+        utils.ui.error(msg)
+        raise FileNotFoundError(msg)
 
     utils.ui.info(get_string("img_avb_extract_info").format(name=boot_bak_img.name))
     boot_info = extract_image_avb_info(boot_bak_img)

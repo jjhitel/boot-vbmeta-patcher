@@ -120,7 +120,7 @@ class GkiRootStrategy(RootStrategy):
     def finalize_patch(
         self, patched_boot: Path, output_dir: Path, backup_source_dir: Path
     ) -> Path:
-        process_boot_image_avb(patched_boot, gki=True)
+        process_boot_image_avb(patched_boot, gki=True, backup_dir=backup_source_dir)
         final_boot = output_dir / self.image_name
         shutil.move(patched_boot, final_boot)
         return final_boot
@@ -186,6 +186,11 @@ class MagiskRootStrategy(RootStrategy):
         magiskboot_exe = utils.get_platform_executable("magiskboot")
         ensure_magiskboot()
 
+        init_boot_source = work_dir / self.image_name
+        init_boot_backup = const.BASE_DIR / self.backup_name
+        if init_boot_source.exists() and not init_boot_backup.exists():
+            shutil.copy(init_boot_source, init_boot_backup)
+
         magisk_files = [
             "magiskinit",
             "magisk",
@@ -214,7 +219,7 @@ class MagiskRootStrategy(RootStrategy):
     def finalize_patch(
         self, patched_boot: Path, output_dir: Path, backup_source_dir: Path
     ) -> Path:
-        process_boot_image_avb(patched_boot, gki=False)
+        process_boot_image_avb(patched_boot, gki=False, backup_dir=backup_source_dir)
 
         vbmeta_bak = backup_source_dir / const.FN_VBMETA_BAK
         patched_vbmeta_path = const.BASE_DIR / const.FN_VBMETA_ROOT
@@ -456,7 +461,7 @@ class LkmRootStrategy(RootStrategy):
     def finalize_patch(
         self, patched_boot: Path, output_dir: Path, backup_source_dir: Path
     ) -> Path:
-        process_boot_image_avb(patched_boot, gki=False)
+        process_boot_image_avb(patched_boot, gki=False, backup_dir=backup_source_dir)
 
         vbmeta_bak = backup_source_dir / const.FN_VBMETA_BAK
         patched_vbmeta_path = const.BASE_DIR / const.FN_VBMETA_ROOT
