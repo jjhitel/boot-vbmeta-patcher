@@ -225,15 +225,6 @@ def patch_boot_with_root_algo(
                 ],
                 cwd=work_dir,
             )
-        utils.run_command(
-            [
-                str(magiskboot_exe),
-                "cpio",
-                "ramdisk.cpio",
-                "add 0755 kernelsu.ko kernelsu.ko",
-            ],
-            cwd=work_dir,
-        )
 
         print(get_string("img_root_step6_init_boot").format(name=img_name))
         utils.run_command([str(magiskboot_exe), "repack", img_name], cwd=work_dir)
