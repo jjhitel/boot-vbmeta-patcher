@@ -79,10 +79,24 @@ def get_root_menu_data(gki: bool) -> List[MenuItem]:
                 "1", get_string("menu_root_1_gki"), action="root_device_gki"
             )
         )
+        items.append(
+            MenuItem.option(
+                "2",
+                get_string("menu_root_2_gki"),
+                action="patch_root_image_file_flash_gki",
+            )
+        )
     else:
         items.append(
             MenuItem.option(
                 "1", get_string("menu_root_1_lkm"), action="root_device_lkm"
+            )
+        )
+        items.append(
+            MenuItem.option(
+                "2",
+                get_string("menu_root_2_lkm"),
+                action="patch_root_image_file_flash_lkm",
             )
         )
 

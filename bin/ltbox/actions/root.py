@@ -480,25 +480,14 @@ class LkmRootStrategy(RootStrategy):
         return final_boot
 
 
-def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
-    if gki:
-        strategy: RootStrategy = GkiRootStrategy()
-    elif root_type == "magisk":
-        strategy = MagiskRootStrategy()
-    else:
-        strategy = LkmRootStrategy(root_type)
-
-    if isinstance(strategy, LkmRootStrategy):
-        strategy.configure_source()
-
-    utils.ui.echo(get_string("act_clean_dir").format(dir=strategy.log_output_dir_name))
-    if strategy.output_dir.exists():
-        shutil.rmtree(strategy.output_dir)
-    strategy.output_dir.mkdir(exist_ok=True)
-    utils.ui.echo("")
-
+def _patch_root_image_from_image_folder(
+    strategy: RootStrategy,
+    gki: bool,
+    dev: Optional[device.DeviceController] = None,
+    lkm_kernel_version: Optional[str] = None,
+    show_manual_flash_notice: bool = True,
+) -> bool:
     utils.check_dependencies()
-
     wait_image = strategy.image_name
     utils.ui.echo(get_string("act_wait_image").format(image=wait_image))
     const.IMAGE_DIR.mkdir(exist_ok=True)
@@ -545,21 +534,20 @@ def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
         if not gki:
             (const.BASE_DIR / const.FN_VBMETA).unlink()
 
-        lkm_kernel_version = None
-        if isinstance(strategy, LkmRootStrategy):
+        if isinstance(strategy, LkmRootStrategy) and not lkm_kernel_version:
             utils.ui.echo(get_string("err_req_kernel_ver_lkm"))
             lkm_kernel_version = input(
                 get_string("prompt_enter_kernel_version")
             ).strip()
             if not lkm_kernel_version:
                 utils.ui.error(get_string("err_kernel_version_req"))
-                return
+                return False
 
         if not strategy.download_resources(lkm_kernel_version):
-            return
+            return False
 
         patched_boot_path = strategy.patch(
-            const.WORK_DIR, dev=None, lkm_kernel_version=lkm_kernel_version
+            const.WORK_DIR, dev=dev, lkm_kernel_version=lkm_kernel_version
         )
 
     if patched_boot_path and patched_boot_path.exists():
@@ -591,11 +579,93 @@ def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
                 )
             )
 
-        utils.ui.echo("\n" + get_string("act_root_manual_flash_notice"))
+        if show_manual_flash_notice:
+            utils.ui.echo("\n" + get_string("act_root_manual_flash_notice"))
         utils.ui.echo("  " + "=" * 78)
+        return True
     else:
         fail_image = "boot" if gki else "init_boot"
         utils.ui.error(get_string("act_err_root_fail_image").format(image=fail_image))
+        return False
+
+
+def patch_root_image_file(gki: bool = False, root_type: str = "ksu") -> None:
+    if gki:
+        strategy: RootStrategy = GkiRootStrategy()
+    elif root_type == "magisk":
+        strategy = MagiskRootStrategy()
+    else:
+        strategy = LkmRootStrategy(root_type)
+
+    if isinstance(strategy, LkmRootStrategy):
+        strategy.configure_source()
+
+    utils.ui.echo(get_string("act_clean_dir").format(dir=strategy.log_output_dir_name))
+    if strategy.output_dir.exists():
+        shutil.rmtree(strategy.output_dir)
+    strategy.output_dir.mkdir(exist_ok=True)
+    utils.ui.echo("")
+
+    _patch_root_image_from_image_folder(strategy, gki)
+
+
+def patch_root_image_file_and_flash(
+    dev: device.DeviceController, gki: bool = False, root_type: str = "ksu"
+) -> None:
+    if gki:
+        strategy: RootStrategy = GkiRootStrategy()
+    elif root_type == "magisk":
+        strategy = MagiskRootStrategy()
+    else:
+        strategy = LkmRootStrategy(root_type)
+
+    _cleanup_manager_apk()
+
+    if isinstance(strategy, LkmRootStrategy):
+        strategy.configure_source()
+
+    utils.ui.echo(get_string("act_clean_dir").format(dir=strategy.log_output_dir_name))
+    if strategy.output_dir.exists():
+        shutil.rmtree(strategy.output_dir)
+    strategy.output_dir.mkdir(exist_ok=True)
+    utils.ui.echo("")
+
+    if not dev.skip_adb:
+        dev.adb.wait_for_device()
+
+    lkm_kernel_version = _get_lkm_kernel_version(dev, strategy)
+
+    if not _patch_root_image_from_image_folder(
+        strategy,
+        gki,
+        dev=dev,
+        lkm_kernel_version=lkm_kernel_version,
+        show_manual_flash_notice=False,
+    ):
+        return
+
+    confirm = (
+        utils.ui.prompt(get_string("prompt_flash_image_folder_confirm")).strip().lower()
+    )
+    if confirm != "y":
+        return
+
+    edl.ensure_edl_requirements()
+
+    active_slot = detect_active_slot_robust(dev)
+    suffix = active_slot if active_slot else ""
+    partition_map = strategy.get_partition_map(suffix)
+
+    if active_slot:
+        utils.ui.echo(get_string("act_active_slot").format(slot=active_slot))
+    else:
+        utils.ui.echo(get_string("act_warn_root_slot"))
+        if gki:
+            partition_map["main"] = "boot"
+        else:
+            partition_map["main"] = "init_boot"
+
+    _flash_root_image(dev, strategy, partition_map, gki)
 
 
 def _prepare_root_env(strategy: RootStrategy):

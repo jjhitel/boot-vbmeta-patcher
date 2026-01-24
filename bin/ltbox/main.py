@@ -799,6 +799,13 @@ def entry_point():
                 gki=True,
             )
             registry.add(
+                "patch_root_image_file_flash_gki",
+                actions.patch_root_image_file_and_flash,
+                get_string("task_title_root_file_gki"),
+                require_dev=True,
+                gki=True,
+            )
+            registry.add(
                 "root_device_lkm",
                 actions.root_device,
                 get_string("task_title_root_lkm"),
@@ -810,6 +817,13 @@ def entry_point():
                 actions.patch_root_image_file,
                 get_string("task_title_root_file_lkm"),
                 require_dev=False,
+                gki=False,
+            )
+            registry.add(
+                "patch_root_image_file_flash_lkm",
+                actions.patch_root_image_file_and_flash,
+                get_string("task_title_root_file_lkm"),
+                require_dev=True,
                 gki=False,
             )
             registry.add(
