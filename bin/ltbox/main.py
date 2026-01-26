@@ -38,7 +38,7 @@ except ImportError:
 
 @dataclass(frozen=True)
 class CommandSpec:
-    func: Callable
+    func: Callable[..., Any]
     title: str
     require_dev: bool = True
     default_kwargs: Dict[str, Any] = field(default_factory=dict)
@@ -63,7 +63,7 @@ class CommandRegistry:
         result_handler: Optional[Callable[[Any], None]] = None,
         **default_kwargs,
     ):
-        def decorator(func: Callable):
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             self._commands[name] = CommandSpec(
                 func=func,
                 title=title,
@@ -78,11 +78,11 @@ class CommandRegistry:
     def add(
         self,
         name: str,
-        func: Callable,
+        func: Callable[..., Any],
         title: str,
         require_dev: bool = True,
         result_handler: Optional[Callable[[Any], None]] = None,
-        **default_kwargs,
+        **default_kwargs: Any,
     ):
         self.register(
             name,
@@ -688,7 +688,7 @@ def _initialize_runtime(lang_code: str) -> Tuple[type, CommandRegistry, Any, Any
         i18n.load_lang(new_lang)
         return get_string("lang_changed")
 
-    command_specs = [
+    command_specs: List[Tuple[str, Callable[..., Any], str, bool, Dict[str, Any]]] = [
         (
             "convert",
             actions.convert_region_images,
