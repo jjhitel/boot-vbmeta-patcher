@@ -215,9 +215,6 @@ def patch_all(
             ]
             _run_steps(ctx, steps)
 
-            for label_key, action, after_key in steps:
-                _run_step(ctx, label_key, action, after_key)
-
             active_slot_str = (
                 ctx.active_slot_suffix
                 if ctx.active_slot_suffix

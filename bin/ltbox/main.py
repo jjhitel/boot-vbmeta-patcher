@@ -410,7 +410,7 @@ def advanced_menu(dev, registry: CommandRegistry, target_region: str):
         elif action == "exit":
             sys.exit()
         elif action:
-            extras = {}
+            extras: Dict[str, Any] = {}
             if action == "convert":
                 extras["target_region"] = target_region
             run_task(action, dev, registry, extra_kwargs=extras)
@@ -428,7 +428,7 @@ def _root_action_menu(dev, registry: CommandRegistry, gki: bool, root_type: str)
         elif action == "exit":
             sys.exit()
         elif action:
-            extras = {}
+            extras: Dict[str, Any] = {}
             if not gki:
                 extras["root_type"] = root_type
             run_task(action, dev, registry, extra_kwargs=extras)
@@ -621,7 +621,7 @@ def main_loop(device_controller_class, registry: CommandRegistry):
         elif action == "menu_advanced":
             advanced_menu(dev, registry, target_region)
         elif action:
-            extras = {}
+            extras: Dict[str, Any] = {}
             if action in ["patch_all", "patch_all_wipe"]:
                 extras["skip_rollback"] = skip_rollback
                 extras["target_region"] = target_region
