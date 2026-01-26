@@ -155,6 +155,18 @@ def _log_workflow_halt() -> None:
     utils.ui.echo(get_string("wf_err_halted"), err=True)
 
 
+def _run_step(
+    ctx: TaskContext,
+    label_key: str,
+    action,
+    after_label_key: Optional[str] = None,
+) -> None:
+    ctx.on_log(get_string(label_key))
+    action()
+    if after_label_key:
+        ctx.on_log(get_string(after_label_key))
+
+
 def patch_all(
     dev: device.DeviceController,
     wipe: int = 0,
@@ -183,15 +195,17 @@ def patch_all(
 
     try:
         with logging_context(log_file):
-            ctx.on_log(get_string("wf_step1_clean"))
             if ctx.wipe == 1:
                 ctx.on_log(get_string("wf_wipe_mode_start"))
             else:
                 ctx.on_log(get_string("wf_nowipe_mode_start"))
-            _cleanup_previous_outputs(ctx)
+            steps = [
+                ("wf_step1_clean", lambda: _cleanup_previous_outputs(ctx), None),
+                ("wf_step2_device_info", lambda: _populate_device_info(ctx), None),
+            ]
 
-            ctx.on_log(get_string("wf_step2_device_info"))
-            _populate_device_info(ctx)
+            for label_key, action, after_key in steps:
+                _run_step(ctx, label_key, action, after_key)
 
             active_slot_str = (
                 ctx.active_slot_suffix
@@ -200,15 +214,18 @@ def patch_all(
             )
             ctx.on_log(get_string("act_active_slot").format(slot=active_slot_str))
 
-            ctx.on_log(get_string("wf_step3_wait_image"))
-            _wait_for_input_images(ctx)
-            ctx.on_log(get_string("wf_step3_found"))
+            remaining_steps = [
+                (
+                    "wf_step3_wait_image",
+                    lambda: _wait_for_input_images(ctx),
+                    "wf_step3_found",
+                ),
+                ("wf_step4_convert", lambda: _convert_region_images(ctx), None),
+                ("wf_step5_modify_xml", lambda: _decrypt_and_modify_xml(ctx), None),
+            ]
 
-            ctx.on_log(get_string("wf_step4_convert"))
-            _convert_region_images(ctx)
-
-            ctx.on_log(get_string("wf_step5_modify_xml"))
-            _decrypt_and_modify_xml(ctx)
+            for label_key, action, after_key in remaining_steps:
+                _run_step(ctx, label_key, action, after_key)
 
             ctx.on_log(get_string("wf_step6_dump"))
             skip_dp_workflow, boot_target, vbmeta_target = _dump_images(ctx)
