@@ -138,6 +138,18 @@ class TerminalMenu:
             input(get_string("press_enter_to_continue"))
 
 
+def _select_menu_action(menu_items: List[MenuItem], title_key: str) -> Optional[str]:
+    menu = TerminalMenu(get_string(title_key))
+    menu.populate(menu_items)
+
+    action_map = {
+        item.key: item.action for item in menu_items if item.item_type == "option"
+    }
+
+    choice = menu.ask(get_string("prompt_select"), get_string("err_invalid_selection"))
+    return action_map.get(choice)
+
+
 # --- Settings & Init ---
 
 
@@ -404,17 +416,7 @@ def run_info_scan(paths, constants, avb_patch):
 def advanced_menu(dev, registry: CommandRegistry, target_region: str):
     while True:
         menu_items = get_advanced_menu_data(target_region)
-        menu = TerminalMenu(get_string("menu_adv_title"))
-        menu.populate(menu_items)
-
-        action_map = {
-            item.key: item.action for item in menu_items if item.item_type == "option"
-        }
-
-        choice = menu.ask(
-            get_string("prompt_select"), get_string("err_invalid_selection")
-        )
-        action = action_map.get(choice)
+        action = _select_menu_action(menu_items, "menu_adv_title")
 
         if action == "back":
             return
@@ -432,17 +434,7 @@ def advanced_menu(dev, registry: CommandRegistry, target_region: str):
 def _root_action_menu(dev, registry: CommandRegistry, gki: bool, root_type: str):
     while True:
         menu_items = menu_data.get_root_menu_data(gki)
-        menu = TerminalMenu(get_string("menu_root_title"))
-        menu.populate(menu_items)
-
-        action_map = {
-            item.key: item.action for item in menu_items if item.item_type == "option"
-        }
-
-        choice = menu.ask(
-            get_string("prompt_select"), get_string("err_invalid_selection")
-        )
-        action = action_map.get(choice)
+        action = _select_menu_action(menu_items, "menu_root_title")
 
         if action == "back":
             return
@@ -526,17 +518,7 @@ def settings_menu(
         menu_items = get_settings_menu_data(
             skip_adb_state, skip_rb_state, target_region
         )
-        menu = TerminalMenu(get_string("menu_settings_title"))
-        menu.populate(menu_items)
-
-        action_map = {
-            item.key: item.action for item in menu_items if item.item_type == "option"
-        }
-
-        choice = menu.ask(
-            get_string("prompt_select"), get_string("err_invalid_selection")
-        )
-        action = action_map.get(choice)
+        action = _select_menu_action(menu_items, "menu_settings_title")
 
         if action == "back":
             return skip_adb, skip_rollback, target_region
@@ -641,17 +623,7 @@ def main_loop(device_controller_class, registry: CommandRegistry):
 
     while True:
         menu_items = get_main_menu_data(target_region)
-        menu = TerminalMenu(get_string("menu_main_title"))
-        menu.populate(menu_items)
-
-        action_map = {
-            item.key: item.action for item in menu_items if item.item_type == "option"
-        }
-
-        choice = menu.ask(
-            get_string("prompt_select"), get_string("err_invalid_selection")
-        )
-        action = action_map.get(choice)
+        action = _select_menu_action(menu_items, "menu_main_title")
 
         if action == "exit":
             break
