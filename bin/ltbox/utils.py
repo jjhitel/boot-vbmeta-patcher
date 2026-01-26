@@ -74,16 +74,14 @@ def _run_command_capture(
     env: dict,
     cwd: Optional[Union[str, Path]],
 ) -> subprocess.CompletedProcess:
+    run_kwargs = _get_subprocess_kwargs(env, cwd)
     return subprocess.run(
         command,
         shell=shell,
         check=check,
         capture_output=True,
         text=True,
-        encoding="utf-8",
-        errors="ignore",
-        env=env,
-        cwd=cwd,
+        **run_kwargs,
     )
 
 
@@ -95,17 +93,15 @@ def _run_command_stream(
     cwd: Optional[Union[str, Path]],
     on_output: Optional[Callable[[str], None]],
 ) -> subprocess.CompletedProcess:
+    run_kwargs = _get_subprocess_kwargs(env, cwd)
     process = subprocess.Popen(
         command,
         shell=shell,
-        env=env,
-        cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        encoding="utf-8",
-        errors="ignore",
         bufsize=1,
+        **run_kwargs,
     )
 
     output_lines = []
@@ -145,6 +141,15 @@ def run_command(
         return _run_command_capture(command, shell, check, run_env, cwd)
 
     return _run_command_stream(command, shell, check, run_env, cwd, on_output)
+
+
+def _get_subprocess_kwargs(env: dict, cwd: Optional[Union[str, Path]]) -> dict:
+    return {
+        "encoding": "utf-8",
+        "errors": "ignore",
+        "env": env,
+        "cwd": cwd,
+    }
 
 
 def get_platform_executable(name: str) -> Path:
