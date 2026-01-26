@@ -1,7 +1,8 @@
 import shutil
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 from . import actions
 from . import constants as const
@@ -155,16 +156,23 @@ def _log_workflow_halt() -> None:
     utils.ui.echo(get_string("wf_err_halted"), err=True)
 
 
-def _run_step(
-    ctx: TaskContext,
-    label_key: str,
-    action,
-    after_label_key: Optional[str] = None,
-) -> None:
-    ctx.on_log(get_string(label_key))
-    action()
-    if after_label_key:
-        ctx.on_log(get_string(after_label_key))
+@dataclass(frozen=True)
+class WorkflowStep:
+    label_key: str
+    action: Callable[[], None]
+    after_label_key: Optional[str] = None
+
+
+def _run_step(ctx: TaskContext, step: WorkflowStep) -> None:
+    ctx.on_log(get_string(step.label_key))
+    step.action()
+    if step.after_label_key:
+        ctx.on_log(get_string(step.after_label_key))
+
+
+def _run_steps(ctx: TaskContext, steps: list[WorkflowStep]) -> None:
+    for step in steps:
+        _run_step(ctx, step)
 
 
 def patch_all(
@@ -200,9 +208,12 @@ def patch_all(
             else:
                 ctx.on_log(get_string("wf_nowipe_mode_start"))
             steps = [
-                ("wf_step1_clean", lambda: _cleanup_previous_outputs(ctx), None),
-                ("wf_step2_device_info", lambda: _populate_device_info(ctx), None),
+                WorkflowStep("wf_step1_clean", lambda: _cleanup_previous_outputs(ctx)),
+                WorkflowStep(
+                    "wf_step2_device_info", lambda: _populate_device_info(ctx)
+                ),
             ]
+            _run_steps(ctx, steps)
 
             for label_key, action, after_key in steps:
                 _run_step(ctx, label_key, action, after_key)
@@ -215,17 +226,17 @@ def patch_all(
             ctx.on_log(get_string("act_active_slot").format(slot=active_slot_str))
 
             remaining_steps = [
-                (
+                WorkflowStep(
                     "wf_step3_wait_image",
                     lambda: _wait_for_input_images(ctx),
-                    "wf_step3_found",
+                    after_label_key="wf_step3_found",
                 ),
-                ("wf_step4_convert", lambda: _convert_region_images(ctx), None),
-                ("wf_step5_modify_xml", lambda: _decrypt_and_modify_xml(ctx), None),
+                WorkflowStep("wf_step4_convert", lambda: _convert_region_images(ctx)),
+                WorkflowStep(
+                    "wf_step5_modify_xml", lambda: _decrypt_and_modify_xml(ctx)
+                ),
             ]
-
-            for label_key, action, after_key in remaining_steps:
-                _run_step(ctx, label_key, action, after_key)
+            _run_steps(ctx, remaining_steps)
 
             ctx.on_log(get_string("wf_step6_dump"))
             skip_dp_workflow, boot_target, vbmeta_target = _dump_images(ctx)
