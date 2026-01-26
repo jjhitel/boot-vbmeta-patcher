@@ -152,6 +152,14 @@ def _get_subprocess_kwargs(env: dict, cwd: Optional[Union[str, Path]]) -> dict:
     }
 
 
+def format_command_output(result: subprocess.CompletedProcess) -> str:
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    if stderr and stdout:
+        return f"{stderr}\n{stdout}"
+    return stderr or stdout
+
+
 def get_platform_executable(name: str) -> Path:
     return const.DOWNLOAD_DIR / f"{name}.exe"
 

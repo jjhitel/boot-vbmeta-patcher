@@ -242,7 +242,7 @@ class FastbootManager:
                 capture=True,
                 check=False,
             )
-            output = result.stderr.strip() + "\n" + result.stdout.strip()
+            output = utils.format_command_output(result)
 
             match = re.search(r"current-slot:\s*([a-z]+)", output)
             if match:
