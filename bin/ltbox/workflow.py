@@ -94,9 +94,8 @@ def _patch_devinfo(ctx: TaskContext, skip_dp_workflow: bool) -> Optional[str]:
     return None
 
 
-def _select_country_code_adapter(options, prompt_msg):
-    utils.ui.info(prompt_msg)
-
+def _format_country_code_options(options) -> list[str]:
+    formatted: list[str] = []
     count = len(options)
     for i in range(0, count, 2):
         code1, name1 = options[i]
@@ -105,10 +104,13 @@ def _select_country_code_adapter(options, prompt_msg):
         if i + 1 < count:
             code2, name2 = options[i + 1]
             item2 = f"{i+2:3d}. {name2} ({code2})"
-            utils.ui.info(f"{item1:<40} {item2}")
+            formatted.append(f"{item1:<40} {item2}")
         else:
-            utils.ui.info(item1)
+            formatted.append(item1)
+    return formatted
 
+
+def _prompt_for_country_code(options) -> str:
     while True:
         choice = utils.ui.prompt(get_string("act_enter_num").format(len=len(options)))
         try:
@@ -118,6 +120,13 @@ def _select_country_code_adapter(options, prompt_msg):
         except ValueError:
             pass
         utils.ui.info(get_string("act_invalid_input"))
+
+
+def _select_country_code_adapter(options, prompt_msg):
+    utils.ui.info(prompt_msg)
+    for line in _format_country_code_options(options):
+        utils.ui.info(line)
+    return _prompt_for_country_code(options)
 
 
 def _check_and_patch_arb(
