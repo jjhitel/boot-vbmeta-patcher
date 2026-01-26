@@ -56,6 +56,41 @@ def _build_menu(specs: List[MenuSpec]) -> List[MenuItem]:
     return items
 
 
+def _nav_specs(
+    *,
+    include_back: bool = False,
+    include_return: bool = False,
+    include_exit: bool = False,
+    return_label_key: str = "menu_root_m",
+) -> List[MenuSpec]:
+    specs: List[MenuSpec] = []
+    if include_back:
+        specs.append(
+            MenuSpec(
+                "option", key="b", text=lambda: get_string("menu_back"), action="back"
+            )
+        )
+    if include_return:
+        specs.append(
+            MenuSpec(
+                "option",
+                key="m",
+                text=lambda: get_string(return_label_key),
+                action="return",
+            )
+        )
+    if include_exit:
+        specs.append(
+            MenuSpec(
+                "option",
+                key="x",
+                text=lambda: get_string("menu_main_exit"),
+                action="exit",
+            )
+        )
+    return specs
+
+
 def get_advanced_menu_data(target_region: str) -> List[MenuItem]:
     region_text = (
         get_string("menu_adv_1_row")
@@ -134,15 +169,7 @@ def get_advanced_menu_data(target_region: str) -> List[MenuItem]:
         ),
         MenuSpec("separator"),
         MenuSpec("label", text=lambda: get_string("menu_adv_sub_nav")),
-        MenuSpec(
-            "option", key="b", text=lambda: get_string("menu_back"), action="back"
-        ),
-        MenuSpec(
-            "option",
-            key="x",
-            text=lambda: get_string("menu_main_exit"),
-            action="exit",
-        ),
+        *_nav_specs(include_back=True, include_exit=True),
     ]
     return _build_menu(specs)
 
@@ -162,21 +189,7 @@ def get_root_mode_menu_data() -> List[MenuItem]:
             action="gki",
         ),
         MenuSpec("separator"),
-        MenuSpec(
-            "option", key="b", text=lambda: get_string("menu_back"), action="back"
-        ),
-        MenuSpec(
-            "option",
-            key="m",
-            text=lambda: get_string("menu_root_m"),
-            action="return",
-        ),
-        MenuSpec(
-            "option",
-            key="x",
-            text=lambda: get_string("menu_main_exit"),
-            action="exit",
-        ),
+        *_nav_specs(include_back=True, include_return=True, include_exit=True),
     ]
     return _build_menu(specs)
 
@@ -221,21 +234,7 @@ def get_root_menu_data(gki: bool) -> List[MenuItem]:
     specs.extend(
         [
             MenuSpec("separator"),
-            MenuSpec(
-                "option", key="b", text=lambda: get_string("menu_back"), action="back"
-            ),
-            MenuSpec(
-                "option",
-                key="m",
-                text=lambda: get_string("menu_root_m"),
-                action="return",
-            ),
-            MenuSpec(
-                "option",
-                key="x",
-                text=lambda: get_string("menu_main_exit"),
-                action="exit",
-            ),
+            *_nav_specs(include_back=True, include_return=True, include_exit=True),
         ]
     )
     return _build_menu(specs)
@@ -281,9 +280,7 @@ def get_settings_menu_data(
             action="check_update",
         ),
         MenuSpec("separator"),
-        MenuSpec(
-            "option", key="b", text=lambda: get_string("menu_back"), action="back"
-        ),
+        *_nav_specs(include_back=True),
     ]
     return _build_menu(specs)
 
@@ -344,11 +341,6 @@ def get_main_menu_data(target_region: str) -> List[MenuItem]:
             text=lambda: get_string("menu_main_adv"),
             action="menu_advanced",
         ),
-        MenuSpec(
-            "option",
-            key="x",
-            text=lambda: get_string("menu_main_exit"),
-            action="exit",
-        ),
+        *_nav_specs(include_exit=True),
     ]
     return _build_menu(specs)
