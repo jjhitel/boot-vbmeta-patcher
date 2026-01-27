@@ -230,14 +230,21 @@ def wait_for_directory(directory: Path, prompt_message: str) -> bool:
 
 
 def check_dependencies() -> None:
+    is_git_checkout = (const.BASE_DIR / ".git").exists()
     dependencies = {
         "Python Environment": const.PYTHON_EXE,
         "ADB": const.ADB_EXE,
         "Fastboot": const.FASTBOOT_EXE,
         "avbtool": const.AVBTOOL_PY,
-        "fh_loader": const.EDL_EXE,
-        "Qsaharaserver": const.QSAHARASERVER_EXE,
     }
+
+    if not is_git_checkout:
+        dependencies.update(
+            {
+                "fh_loader": const.EDL_EXE,
+                "Qsaharaserver": const.QSAHARASERVER_EXE,
+            }
+        )
 
     for path in const.KEY_MAP.values():
         dependencies[path.name] = path
