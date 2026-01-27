@@ -8,6 +8,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from types import TracebackType
 from typing import Callable, Dict, Optional
 
 import py7zr
@@ -44,13 +45,16 @@ TARGETS = [
 
 
 def _handle_remove_readonly(
-    func: Callable[[str], None], path: str, exc_info: object
+    func: Callable[[str], None],
+    path: str,
+    exc_info: tuple[type[BaseException], BaseException, TracebackType | None],
 ) -> None:
-    if isinstance(exc_info[1], PermissionError):
+    exc = exc_info[1]
+    if isinstance(exc, PermissionError):
         os.chmod(path, stat.S_IWRITE)
         func(path)
         return
-    raise exc_info[1]
+    raise exc
 
 
 def _safe_rmtree(path: Path) -> None:

@@ -950,6 +950,8 @@ def _run_entry_mode(
 
         input(get_string("press_enter_to_exit"))
     else:
+        if settings_store is None:
+            settings_store = SETTINGS_STORE
         main_loop(device_controller_class, registry, settings_store=settings_store)
 
 
