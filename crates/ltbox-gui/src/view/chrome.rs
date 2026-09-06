@@ -59,6 +59,9 @@ impl App {
             layers.push(self.error_banner(err));
         }
         let dialog_layer_start = layers.len();
+        if self.software_fix.confirm_open {
+            layers.push(self.software_fix_confirm_dialog());
+        }
         if self.country_popup_open {
             layers.push(self.country_popup_view());
         }

@@ -1,7 +1,7 @@
 //! Launch-time screenshot scenes for the opt-in `demo` feature.
 //!
 //! `LTBOX_DEMO` accepts dashboard scenes `dashboard`, `drivers-missing`,
-//! `adb-conflict`, and `dual-usb-advisory`, plus wizard scenes `<flow>:<step>`
+//! `adb-conflict`, `software-fix`, and `dual-usb-advisory`, plus wizard scenes `<flow>:<step>`
 //! where `flow` is `same` or `other` and `step` is `region`, `target`, `data`,
 //! `country`, `folder`, `confirm`, or `flash`. It also accepts first-screen view scenes
 //! `view:root`, `view:unroot`, `view:sysupdate`, `view:konabess`,
@@ -17,6 +17,7 @@ pub(crate) const VALID_SCENES: &[&str] = &[
     "dashboard",
     "drivers-missing",
     "adb-conflict",
+    "software-fix",
     "dual-usb-advisory",
     "same:region",
     "same:target",
@@ -59,6 +60,7 @@ pub(crate) enum Scene {
     Dashboard,
     DriversMissing,
     AdbConflict,
+    SoftwareFix,
     DualUsbAdvisory,
     Wizard { flow: Flow, step: WizardStep },
     View(View),
@@ -109,6 +111,7 @@ impl Scene {
             "dashboard" => Some(Self::Dashboard),
             "drivers-missing" => Some(Self::DriversMissing),
             "adb-conflict" => Some(Self::AdbConflict),
+            "software-fix" => Some(Self::SoftwareFix),
             "dual-usb-advisory" => Some(Self::DualUsbAdvisory),
             "view:root" => Some(Self::View(View::Root)),
             "view:unroot" => Some(Self::View(View::Unroot)),
@@ -160,7 +163,7 @@ impl Scene {
 
     fn poll_result(self) -> DevicePollResult {
         match self {
-            Self::DriversMissing => return DevicePollResult::default(),
+            Self::SoftwareFix | Self::DriversMissing => return DevicePollResult::default(),
             Self::AdbConflict => {
                 return DevicePollResult {
                     status: ConnectionStatus::AdbServerBlocking,
@@ -225,6 +228,10 @@ pub(crate) fn initialize(app: &mut App) {
         _ => ltbox_device::driver::DriverStatus::Present,
     });
     app.online = Some(true);
+    app.software_fix.running = scene == Scene::SoftwareFix;
+    if scene == Scene::SoftwareFix {
+        app.startup_disclaimer_open = false;
+    }
 
     if scene == Scene::DualUsbAdvisory {
         apply_dual_usb_advisory_scene(app);
@@ -239,7 +246,11 @@ pub(crate) fn initialize(app: &mut App) {
         Scene::Root(root_scene) => apply_root_scene(app, root_scene),
         Scene::AdvancedRegionTarget => apply_advanced_region_target_scene(app),
         Scene::SysUpdateRescue(rescue_scene) => apply_sysupdate_rescue_scene(app, rescue_scene),
-        Scene::DualUsbAdvisory | Scene::Dashboard | Scene::DriversMissing | Scene::AdbConflict => {}
+        Scene::SoftwareFix
+        | Scene::DualUsbAdvisory
+        | Scene::Dashboard
+        | Scene::DriversMissing
+        | Scene::AdbConflict => {}
     }
 }
 
@@ -433,6 +444,7 @@ pub(crate) fn blocks_device_action(app: &App, message: &Message) -> bool {
                 | Message::FlashPhys(_)
                 | Message::SimpleFlash(_)
                 | Message::Reboot(_)
+                | Message::ConfirmCloseSoftwareFix
                 | Message::KillAdbServer
                 | Message::InstallDrivers
         )

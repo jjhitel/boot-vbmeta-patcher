@@ -10,3 +10,4 @@ pub mod driver;
 pub mod edl;
 pub mod fastboot;
 pub mod selection;
+pub mod software_fix;

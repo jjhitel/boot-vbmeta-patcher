@@ -68,7 +68,9 @@ impl App {
         if demo::blocks_device_action(self, &msg) {
             return Task::none();
         }
-        if (self.device_poll_in_flight.is_some() || self.adb_server_kill_in_flight)
+        if (self.device_poll_in_flight.is_some()
+            || self.adb_server_kill_in_flight
+            || self.software_fix.closing)
             && device_poll_gate::defers_message(&msg)
         {
             self.device_poll_deferred.push_back(msg);
@@ -497,6 +499,12 @@ impl App {
                     }
                 }
             }
+            Message::PollSoftwareFix => return self.poll_software_fix(),
+            Message::SoftwareFixPolled(result) => self.software_fix_polled(result),
+            Message::ForceCloseSoftwareFix => return self.force_close_software_fix(),
+            Message::ConfirmCloseSoftwareFix => return self.confirm_close_software_fix(),
+            Message::CancelCloseSoftwareFix => self.software_fix.confirm_open = false,
+            Message::SoftwareFixClosed(result) => return self.software_fix_closed(result),
             // Device polling
             Message::PollDevice => {
                 if !self.can_poll_device() {

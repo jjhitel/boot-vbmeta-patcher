@@ -6,6 +6,33 @@ use iced::{Element, Length, Theme};
 use theme::with_alpha;
 
 impl App {
+    pub(crate) fn software_fix_confirm_dialog(&self) -> Element<'_, Message> {
+        let d = self.density();
+        m3_dialog(
+            column![
+                text(self.t("software_fix_confirm_title").to_string()).size(d.text(20.0)),
+                text(self.t("software_fix_elevation_hint").to_string())
+                    .size(d.text(13.0))
+                    .style(muted_style),
+                row![
+                    Space::new().width(Length::Fill),
+                    m3_text_button(self.t("btn_cancel").to_string())
+                        .on_press(Message::CancelCloseSoftwareFix),
+                    m3_filled_button(self.t("btn_ok").to_string()).on_press_maybe(
+                        self.can_close_software_fix()
+                            .then_some(Message::ConfirmCloseSoftwareFix)
+                    ),
+                ]
+                .spacing(d.space(10.0))
+                .align_y(iced::Alignment::Center),
+            ]
+            .spacing(d.space(16.0))
+            .padding(d.space(24.0))
+            .width(Length::Fixed(d.width(380.0)))
+            .into(),
+        )
+    }
+
     /// Illustrated guide for the data-capable port on dual-USB-C tablets.
     pub(crate) fn dual_usb_help_dialog(&self) -> Element<'_, Message> {
         let model = self.dual_usb_help_model.clone();

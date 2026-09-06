@@ -3,6 +3,9 @@ use crate::*;
 
 impl App {
     pub(crate) fn self_update_blocked_reason(&self) -> Option<String> {
+        if self.software_fix.closing {
+            return Some(self.t("software_fix_closing").to_string());
+        }
         if self.installing_drivers {
             return Some(self.t("driver_installing_btn").to_string());
         }
@@ -84,6 +87,8 @@ pub(super) fn blocks_message(msg: &Message) -> bool {
         | Message::Navigate(_)
         | Message::StartOver
         | Message::PollDevice
+        | Message::ConfirmCloseSoftwareFix
+        | Message::ForceCloseSoftwareFix
         | Message::KillAdbServer
         | Message::InstallDrivers
         | Message::RecentFilePicked(..)

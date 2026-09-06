@@ -44,6 +44,48 @@ impl App {
         .into()
     }
 
+    #[cfg(windows)]
+    fn software_fix_banner(&self) -> Element<'_, Message> {
+        let d = self.density();
+        let label = if self.software_fix.closing {
+            "software_fix_closing"
+        } else {
+            "btn_software_fix_force_close"
+        };
+        let action =
+            button(text(self.t(label).to_string()).size(d.text(theme::text_size::LABEL_LARGE)))
+                .on_press_maybe(
+                    self.can_close_software_fix()
+                        .then_some(Message::ForceCloseSoftwareFix),
+                )
+                .padding(d.padding(10.0, 18.0))
+                .style(banner_filled_btn_style);
+        let mut body = column![
+            text(self.t("dash_software_fix_title").to_string())
+                .size(d.text(theme::text_size::TITLE_SMALL))
+                .font(theme::emphasis::medium())
+                .style(warning_container_text_style),
+            text(self.t("dash_software_fix_desc").to_string())
+                .size(d.text(theme::text_size::BODY_SMALL))
+                .style(warning_container_text_style),
+        ]
+        .spacing(d.space(8.0))
+        .width(Length::Fill);
+        if let Some(key) = self.software_fix.error_key {
+            body = body.push(
+                text(self.t(key).to_string())
+                    .size(d.text(theme::text_size::BODY_SMALL))
+                    .style(warning_container_text_style),
+            );
+        }
+        self.warning_banner(
+            row![body, action]
+                .spacing(d.space(16.0))
+                .align_y(iced::Alignment::Center)
+                .width(Length::Fill),
+        )
+    }
+
     pub(crate) fn view_dashboard(&self) -> Element<'_, Message> {
         let d = self.density();
         let model = if self.device_model.is_empty() {
@@ -103,6 +145,11 @@ impl App {
             .spacing(d.space(14.0))
             .width(Length::Fill)
             .height(Length::Fill);
+
+        #[cfg(windows)]
+        if self.software_fix.running {
+            content = content.push(self.software_fix_banner());
+        }
 
         // Unauthorized ADB wins over the platform warning — empty
         // `ro.boot.hardware` otherwise reads as "unsupported platform".

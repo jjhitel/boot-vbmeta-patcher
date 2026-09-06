@@ -31,6 +31,7 @@ mod platform_installers;
 mod root_manager;
 mod self_update;
 mod settings_store;
+mod software_fix;
 mod stdout_tap;
 mod theme;
 mod theme_detect;
@@ -1835,6 +1836,7 @@ struct App {
     /// Staging slot for the Reboot confirm popup.
     reboot_confirm_target: Option<RebootTarget>,
     // Device & operation state
+    software_fix: software_fix::State,
     device_poll_sequence: u64,
     device_poll_in_flight: Option<u64>,
     device_poll_deferred: std::collections::VecDeque<Message>,
@@ -2118,6 +2120,7 @@ impl Default for App {
             region_target_popup_open: false,
             reboot_confirm_target: None,
             connection: ConnectionStatus::default(),
+            software_fix: software_fix::State::default(),
             device_poll_sequence: 0,
             device_poll_in_flight: None,
             device_poll_deferred: std::collections::VecDeque::new(),
@@ -2294,6 +2297,7 @@ impl App {
                 connectivity,
                 connectivity_notice,
                 driver_update_check,
+                Task::done(Message::PollSoftwareFix),
             ]),
         )
     }
@@ -3111,6 +3115,10 @@ impl App {
     }
 
     fn persist_settings(&self) {
+        #[cfg(feature = "demo")]
+        if demo::is_active(self) {
+            return;
+        }
         settings_store::save(&settings_store::PersistedSettings {
             language: self.settings.language.code().to_string(),
             theme: self.theme_choice.code().to_string(),
@@ -3251,6 +3259,10 @@ impl App {
             iced::time::every(std::time::Duration::from_millis(500))
                 .map(|_| Message::DrainStdoutTap),
         ];
+        #[cfg(windows)]
+        subs.push(
+            iced::time::every(std::time::Duration::from_secs(2)).map(|_| Message::PollSoftwareFix),
+        );
         // Sidebar width tween: only emit ticks while the spring
         // hasn't settled at its target so the GPU isn't woken every
         // 16 ms forever. Velocity check catches the overshoot tail.
