@@ -9,8 +9,11 @@ use ltbox_core::tr_args;
 
 #[cfg(test)]
 mod device_poll_tests;
+#[cfg(test)]
+mod poll_gate_tests;
 
 mod advanced;
+mod device_poll_gate;
 mod flash;
 mod konabess;
 mod reboot;
@@ -63,6 +66,12 @@ impl App {
         }
         #[cfg(feature = "demo")]
         if demo::blocks_device_action(self, &msg) {
+            return Task::none();
+        }
+        if (self.device_poll_in_flight.is_some() || self.adb_server_kill_in_flight)
+            && device_poll_gate::defers_message(&msg)
+        {
+            self.device_poll_deferred.push_back(msg);
             return Task::none();
         }
         match msg {
@@ -351,6 +360,10 @@ impl App {
             }
             Message::DismissError => self.error_msg = None,
             Message::KillAdbServer => {
+                if self.busy || self.installing_drivers || self.adb_server_kill_in_flight {
+                    return Task::none();
+                }
+                self.adb_server_kill_in_flight = true;
                 return Task::perform(
                     async {
                         tokio::task::spawn_blocking(ltbox_device::adb::kill_adb_server)
@@ -361,11 +374,17 @@ impl App {
                                 )))
                             })
                     },
-                    |res| match res {
-                        Ok(()) => Message::PollDevice,
-                        Err(e) => Message::OperationError(format!("Kill adb server: {e}")),
-                    },
+                    |res| Message::AdbServerKillFinished(res.map_err(|e| e.to_string())),
                 );
+            }
+            Message::AdbServerKillFinished(result) => {
+                self.adb_server_kill_in_flight = false;
+                if let Err(error) = result {
+                    self.error_msg = Some(format!("Kill adb server: {error}"));
+                }
+                return self
+                    .resume_after_device_poll()
+                    .chain(Task::done(Message::PollDevice));
             }
             Message::StartOver => {
                 match self.current_view {
@@ -480,9 +499,15 @@ impl App {
             }
             // Device polling
             Message::PollDevice => {
+                if !self.can_poll_device() {
+                    return Task::none();
+                }
+                self.device_poll_sequence = self.device_poll_sequence.wrapping_add(1);
+                let poll_id = self.device_poll_sequence;
+                self.device_poll_in_flight = Some(poll_id);
                 #[cfg(feature = "demo")]
                 if let Some(result) = demo::poll_result(self) {
-                    return Task::done(Message::DevicePolled(result));
+                    return Task::done(Message::DevicePollFinished(poll_id, Some(result)));
                 }
                 return Task::perform(
                     async {
@@ -591,10 +616,13 @@ impl App {
                             r
                         })
                         .await
-                        .unwrap_or_default()
+                        .ok()
                     },
-                    Message::DevicePolled,
+                    move |result| Message::DevicePollFinished(poll_id, result),
                 );
+            }
+            Message::DevicePollFinished(poll_id, result) => {
+                return self.finish_device_poll(poll_id, result);
             }
             Message::DevicePolled(r) => {
                 let previous_dual_usb_advisory_model =

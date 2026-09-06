@@ -43,6 +43,8 @@ pub(crate) enum Message {
     StartOver,
     PollDevice,
     DevicePolled(DevicePollResult),
+    DevicePollFinished(u64, Option<DevicePollResult>),
+    AdbServerKillFinished(Result<(), String>),
     /// Dashboard "Kill Server" button fired when an external adb
     /// server is holding the Android USB interface — sends `host:kill`
     /// to `127.0.0.1:5037` so LTBox's libusb claim can succeed on the

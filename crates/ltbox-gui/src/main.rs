@@ -1835,6 +1835,10 @@ struct App {
     /// Staging slot for the Reboot confirm popup.
     reboot_confirm_target: Option<RebootTarget>,
     // Device & operation state
+    device_poll_sequence: u64,
+    device_poll_in_flight: Option<u64>,
+    device_poll_deferred: std::collections::VecDeque<Message>,
+    adb_server_kill_in_flight: bool,
     connection: ConnectionStatus,
     device_model: String,
     device_slot: String,
@@ -2114,6 +2118,10 @@ impl Default for App {
             region_target_popup_open: false,
             reboot_confirm_target: None,
             connection: ConnectionStatus::default(),
+            device_poll_sequence: 0,
+            device_poll_in_flight: None,
+            device_poll_deferred: std::collections::VecDeque::new(),
+            adb_server_kill_in_flight: false,
             device_model: String::new(),
             device_slot: String::new(),
             fastboot_userspace: false,
