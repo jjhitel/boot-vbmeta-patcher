@@ -38,6 +38,7 @@ sha2 = { workspace = true }
 zip = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true }
@@ -49,4 +50,3 @@ iced_lucide = { workspace = true }
 
 [dev-dependencies]
 avbtool-rs = { workspace = true }
-tempfile = "3"
