@@ -308,14 +308,27 @@ pub(crate) fn flash_parts_execute(
                         sectors = row.num_sectors.to_string()
                     )
                 );
-                phases.mark_writes_started();
-                if let Err(e) = session.erase_partition_at(
-                    &row.label,
-                    row.lun,
-                    &row.start_sector.to_string(),
-                    row.num_sectors as usize,
-                    &mut log,
-                ) {
+                // GPT sector counts are u64; reject counts the erase API
+                // cannot represent instead of truncating them.
+                let erase_outcome = match usize::try_from(row.num_sectors) {
+                    Ok(count) => {
+                        phases.mark_writes_started();
+                        session
+                            .erase_partition_at(
+                                &row.label,
+                                row.lun,
+                                &row.start_sector.to_string(),
+                                count,
+                                &mut log,
+                            )
+                            .map_err(|e| e.to_string())
+                    }
+                    Err(_) => Err(format!(
+                        "partition geometry out of range (start_sector={}, num_sectors={})",
+                        row.start_sector, row.num_sectors
+                    )),
+                };
+                if let Err(e) = erase_outcome {
                     ltbox_core::live!(
                         log,
                         "[FlashParts] {}",
