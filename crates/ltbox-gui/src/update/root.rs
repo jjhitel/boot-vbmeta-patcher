@@ -142,7 +142,7 @@ impl App {
                         // over a different live operation. Use silent busy
                         // (empty `op_steps`) so the probe is distinguishable
                         // from a phased Root exec that already owns `busy`.
-                        if self.busy {
+                        if self.operation.is_running() {
                             return Task::none();
                         }
                         self.begin_silent_op(View::Root);
@@ -166,7 +166,7 @@ impl App {
                             |_e| None,
                         );
                     }
-                    if self.busy {
+                    if self.operation.is_running() {
                         return Task::none();
                     }
                     self.root.next();
@@ -340,8 +340,9 @@ impl App {
                 // Root busy reservation. A phased Root exec (non-empty
                 // `op_steps`), a cleared busy flag, or a different
                 // `busy_view` means the result is stale — never auto-launch.
-                let probe_still_ours =
-                    self.busy && self.busy_view == Some(View::Root) && self.op_steps.is_empty();
+                let probe_still_ours = self.operation.is_running()
+                    && self.operation.view() == Some(View::Root)
+                    && self.operation.steps.is_empty();
                 if !probe_still_ours {
                     return Task::none();
                 }
@@ -371,7 +372,7 @@ impl App {
                 // Refuse to start while any busy op is live (including a
                 // still-held KSU probe reservation). Callers that own the
                 // probe path release it before re-entering here.
-                if self.busy {
+                if self.operation.is_running() {
                     return Task::none();
                 }
                 if self.is_xiaoxin_pro13() {
@@ -550,12 +551,15 @@ mod tests {
             root: ksu_lkm_confirm_wizard(),
             ..App::default()
         };
-        assert!(!app.busy);
+        assert!(!app.operation.is_running());
         let _task = app.update_root(RootMsg::RootNext);
-        assert!(app.busy, "probe must reserve busy before blocking ADB work");
-        assert_eq!(app.busy_view, Some(View::Root));
         assert!(
-            app.op_steps.is_empty(),
+            app.operation.is_running(),
+            "probe must reserve busy before blocking ADB work"
+        );
+        assert_eq!(app.operation.view(), Some(View::Root));
+        assert!(
+            app.operation.steps.is_empty(),
             "probe uses silent busy so it stays distinct from phased root"
         );
     }
@@ -563,15 +567,14 @@ mod tests {
     #[test]
     fn root_next_skips_ksu_probe_when_already_busy() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Flash),
+            operation: OperationExecution::fixture(true, Some(View::Flash), Vec::new(), 0, None),
             root: ksu_lkm_confirm_wizard(),
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootNext);
-        assert!(app.busy);
+        assert!(app.operation.is_running());
         assert_eq!(
-            app.busy_view,
+            app.operation.view(),
             Some(View::Flash),
             "must not steal another op's busy reservation for the probe"
         );
@@ -580,13 +583,12 @@ mod tests {
     #[test]
     fn ksu_probe_done_ignores_when_busy_reservation_lost() {
         let mut app = App {
-            busy: false,
-            busy_view: None,
+            operation: OperationExecution::fixture(false, None, Vec::new(), 0, None),
             root: ksu_lkm_confirm_wizard(),
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootKernelVersionProbeDone(Some("6.1".to_string())));
-        assert!(!app.busy);
+        assert!(!app.operation.is_running());
         assert!(app.root.kernel_version.is_none());
         assert_eq!(app.root.step, 6);
         assert!(!app.root.kernel_version_popup_open);
@@ -596,16 +598,20 @@ mod tests {
     fn ksu_probe_done_ignores_phased_root_busy_overlap() {
         // A late probe callback must not clear or hijack a live phased root.
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Root),
-            op_steps: vec![
-                OpStep {
-                    label: "Patch".to_string(),
-                },
-                OpStep {
-                    label: "Flash".to_string(),
-                },
-            ],
+            operation: OperationExecution::fixture(
+                true,
+                Some(View::Root),
+                vec![
+                    OpStep {
+                        label: "Patch".to_string(),
+                    },
+                    OpStep {
+                        label: "Flash".to_string(),
+                    },
+                ],
+                0,
+                None,
+            ),
             root: {
                 let mut w = ksu_lkm_confirm_wizard();
                 w.step = 7;
@@ -615,9 +621,9 @@ mod tests {
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootKernelVersionProbeDone(Some("6.6".to_string())));
-        assert!(app.busy);
-        assert_eq!(app.busy_view, Some(View::Root));
-        assert_eq!(app.op_steps.len(), 2);
+        assert!(app.operation.is_running());
+        assert_eq!(app.operation.view(), Some(View::Root));
+        assert_eq!(app.operation.steps.len(), 2);
         assert_eq!(app.root.kernel_version.as_deref(), Some("6.1"));
         assert_eq!(app.root.step, 7);
     }
@@ -625,8 +631,7 @@ mod tests {
     #[test]
     fn ksu_probe_done_releases_busy_when_wizard_left_gate() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Root),
+            operation: OperationExecution::fixture(true, Some(View::Root), Vec::new(), 0, None),
             root: {
                 let mut w = ksu_lkm_confirm_wizard();
                 w.step = 5; // user backed out during probe
@@ -635,8 +640,8 @@ mod tests {
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootKernelVersionProbeDone(Some("6.1".to_string())));
-        assert!(!app.busy);
-        assert_eq!(app.busy_view, None);
+        assert!(!app.operation.is_running());
+        assert_eq!(app.operation.view(), None);
         assert!(app.root.kernel_version.is_none());
         assert_eq!(app.root.step, 5);
     }
@@ -644,14 +649,13 @@ mod tests {
     #[test]
     fn ksu_probe_done_opens_manual_popup_and_releases_busy() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Root),
+            operation: OperationExecution::fixture(true, Some(View::Root), Vec::new(), 0, None),
             root: ksu_lkm_confirm_wizard(),
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootKernelVersionProbeDone(None));
-        assert!(!app.busy);
-        assert_eq!(app.busy_view, None);
+        assert!(!app.operation.is_running());
+        assert_eq!(app.operation.view(), None);
         assert!(app.root.kernel_version_popup_open);
         assert!(app.root.kernel_version.is_none());
         assert_eq!(app.root.step, 6);
@@ -662,8 +666,7 @@ mod tests {
         // Missing loader makes RootExecStart fail before begin_phased_op —
         // proves the probe reservation is released and no nested busy remains.
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Root),
+            operation: OperationExecution::fixture(true, Some(View::Root), Vec::new(), 0, None),
             root: {
                 let mut w = ksu_lkm_confirm_wizard();
                 w.folder_path = None;
@@ -674,16 +677,15 @@ mod tests {
         let _task = app.update_root(RootMsg::RootKernelVersionProbeDone(Some("6.1".to_string())));
         assert_eq!(app.root.kernel_version.as_deref(), Some("6.1"));
         assert_eq!(app.root.step, 7);
-        assert!(!app.busy);
-        assert_eq!(app.busy_view, None);
+        assert!(!app.operation.is_running());
+        assert_eq!(app.operation.view(), None);
         assert!(app.error_msg.is_some());
     }
 
     #[test]
     fn root_exec_start_refuses_while_busy() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Flash),
+            operation: OperationExecution::fixture(true, Some(View::Flash), Vec::new(), 0, None),
             root: {
                 let mut w = ksu_lkm_confirm_wizard();
                 w.kernel_version = Some("6.1".to_string());
@@ -694,10 +696,10 @@ mod tests {
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootExecStart);
-        assert!(app.busy);
-        assert_eq!(app.busy_view, Some(View::Flash));
+        assert!(app.operation.is_running());
+        assert_eq!(app.operation.view(), Some(View::Flash));
         // Must not have started a root op or clobbered the foreign reservation.
-        assert!(app.op_steps.is_empty());
+        assert!(app.operation.steps.is_empty());
     }
 
     #[test]

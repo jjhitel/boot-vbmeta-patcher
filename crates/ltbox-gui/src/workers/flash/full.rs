@@ -1450,6 +1450,7 @@ pub(crate) fn flash_worker(
     // Lenovo-key bootloader on a testkey-resigned chain. Restore best-effort on
     // those error paths (device stays in EDL for retry); the success-path
     // restore below stays fatal.
+    phases.mark_writes_started();
     if let Err(e) = session.flash_rawprogram_with_wipe(&raw_xmls, &patch_xmls, cfg.wipe, &mut log) {
         let err = tr_args!("err_flash_firmware_failed", error = e.to_string());
         restore_abl_best_effort(&mut session, &abl_restore, &mut log);
@@ -1466,6 +1467,7 @@ pub(crate) fn flash_worker(
             "[ARB] {}",
             tr_args!("live_arb_flash_patched", label = label)
         );
+        phases.mark_writes_started();
         if let Err(e) = session.flash_partition(label, patched, 0, *lun, &mut log) {
             let err = tr_args!(
                 "err_flash_arb_partition_failed",
@@ -1487,6 +1489,7 @@ pub(crate) fn flash_worker(
             "[ARB] {}",
             ltbox_core::i18n::tr("live_flash_abl_restore")
         );
+        phases.mark_writes_started();
         if let Err(e) = session.flash_partition("abl_a", abl_img, 0, *lun, &mut log) {
             return Err(tr_args!(
                 "err_flash_abl_restore_failed",
@@ -1514,6 +1517,7 @@ pub(crate) fn flash_worker(
                     "[Flash] {}",
                     ltbox_core::i18n::tr("live_flash_efisp_flash")
                 );
+                phases.mark_writes_started();
                 if let Err(e) = session.flash_partition("efisp", efi, 0, efisp_lun, &mut log) {
                     ltbox_core::live!(
                         log,
@@ -1553,6 +1557,7 @@ pub(crate) fn flash_worker(
                         "[Flash] {}",
                         ltbox_core::i18n::tr("live_flash_efisp_erase")
                     );
+                    phases.mark_writes_started();
                     if let Err(e) = session.erase_partition_by_name("efisp", 0, efisp_lun, &mut log)
                     {
                         ltbox_core::live!(
@@ -1595,6 +1600,7 @@ pub(crate) fn flash_worker(
                     path = image.display().to_string()
                 )
             );
+            phases.mark_writes_started();
             if let Err(e) = session.flash_partition(label, image, 0, lun, &mut log) {
                 return Err(tr_args!(
                     "err_region_flash_failed",
@@ -1678,6 +1684,7 @@ pub(crate) fn flash_worker(
     // previously-active `_b` on the next reset
     // and the freshly-written `_a` firmware
     // would never run.
+    phases.mark_writes_started();
     if let Err(e) = session.set_active_slot_a(&mut log) {
         return Err(tr_args!(
             "err_flash_set_bootable_lun_failed",

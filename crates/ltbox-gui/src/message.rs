@@ -11,6 +11,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
+    /// A result owned by one foreground operation; late results are discarded.
+    OperationEvent(crate::operation_execution::OperationId, Box<Message>),
     /// No-op for click-blocker mouse_area widgets.
     Noop,
     StartupDisclaimerToggled(bool),

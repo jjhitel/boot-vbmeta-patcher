@@ -41,7 +41,9 @@ impl App {
             if self.konabess.step == 1 {
                 wizard_nav_cancel_generic_with_disabled_next_tooltip(
                     label,
-                    self.konabess.can_next() && !self.busy && !self.is_xiaoxin_pro13(),
+                    self.konabess.can_next()
+                        && !self.operation.is_running()
+                        && !self.is_xiaoxin_pro13(),
                     unsupported,
                     self.t("btn_cancel"),
                     Message::KonaBess(KonaBessMsg::KonaBessBack),
@@ -51,7 +53,9 @@ impl App {
                 wizard_nav_generic_with_disabled_next_tooltip(
                     self.konabess.step > 0,
                     label,
-                    self.konabess.can_next() && !self.busy && !self.is_xiaoxin_pro13(),
+                    self.konabess.can_next()
+                        && !self.operation.is_running()
+                        && !self.is_xiaoxin_pro13(),
                     unsupported,
                     self.t("btn_back"),
                     Message::KonaBess(KonaBessMsg::KonaBessBack),

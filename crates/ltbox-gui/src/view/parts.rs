@@ -79,7 +79,7 @@ impl App {
             // in EDL (the GPT scan transitioned it) where the model can't be
             // polled, and the loader was already validated by that scan.
             let can = self.flash_parts.can_next()
-                && !(self.busy && is_start)
+                && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
             let leading_action = if self.flash_parts.step == 1 {
                 partition_table_leading_action(self.flash_parts.entry_connection)
@@ -516,7 +516,9 @@ impl App {
             // DumpParts touches EDL on both Scan (step 0) and Dump
             // (step 1) — both spawn workers that talk to the device.
             // Gate both buttons on reachability.
-            let can = self.dump_parts.can_next() && !self.busy && self.device_reachable();
+            let can = self.dump_parts.can_next()
+                && !self.operation.is_running()
+                && self.device_reachable();
             let leading_action = if self.dump_parts.step == 1 {
                 partition_table_leading_action(self.dump_parts.entry_connection)
             } else {
@@ -699,7 +701,9 @@ impl App {
             };
             // DumpPhys talks to EDL — gate both Scan + Dump on a
             // reachable device.
-            let can = self.dump_phys.can_next() && !self.busy && self.device_reachable();
+            let can = self.dump_phys.can_next()
+                && !self.operation.is_running()
+                && self.device_reachable();
             wizard_nav_generic(
                 true,
                 &label,
@@ -816,7 +820,7 @@ impl App {
             // in EDL where the model can't be polled, and the loader was already
             // used to open the session.
             let can = self.flash_phys.can_next()
-                && !(self.busy && is_start)
+                && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
             wizard_nav_generic(
                 true,

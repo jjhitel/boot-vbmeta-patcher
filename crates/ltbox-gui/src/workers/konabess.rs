@@ -67,6 +67,7 @@ struct DeviceBackend<'a> {
     loader: &'a Path,
     is_tb323fu: bool,
     device_model: &'a str,
+    phases: &'a PhaseReporter,
     session: Option<ltbox_device::edl::EdlSession>,
     writes_started: bool,
 }
@@ -154,6 +155,9 @@ impl KonaBessInspectionBackend for DeviceBackend<'_> {
                     log,
                 )?;
                 self.writes_started = staged.is_some();
+                if self.writes_started {
+                    self.phases.mark_writes_started();
+                }
                 provision_tb323fu_efisp(self.session()?, staged.as_deref(), log)?;
                 Ok(())
             }
@@ -302,6 +306,7 @@ pub(crate) fn konabess_inspection_worker(
         loader: &loader,
         is_tb323fu,
         device_model: &device_model,
+        phases: &phases,
         session: None,
         writes_started: false,
     };
@@ -493,12 +498,14 @@ fn execute_flash<B: KonaBessFlashBackend>(
 
     live!(log, "[KonaBess] {}", phases.marker(6));
     backend.open_session(log)?;
+    phases.mark_writes_started();
     backend.flash_partition(
         &vendor_boot_partition,
         &output.vendor_boot,
         vendor_boot_lun,
         log,
     )?;
+    phases.mark_writes_started();
     backend.flash_partition(&vbmeta_partition, &output.vbmeta, vbmeta_lun, log)?;
 
     // The reset is deliberately unreachable until both members of the

@@ -51,9 +51,9 @@ impl App {
         cfg!(windows)
             && self.software_fix.running
             && !self.software_fix.closing
-            && !self.busy
+            && !self.operation.is_running()
             && !self.installing_drivers
-            && !self.direct_update_state.is_active()
+            && !self.operation.direct_update.is_active()
             && self.konabess.prepared.is_none()
     }
 
@@ -141,10 +141,10 @@ mod tests {
     fn force_close_is_disabled_during_device_work_or_another_close() {
         let mut app = App::default();
         app.software_fix.running = true;
-        app.busy = true;
+        app.begin_silent_op(View::Root);
         assert!(!app.can_close_software_fix());
         assert_eq!(app.force_close_software_fix().units(), 0);
-        app.busy = false;
+        app.end_silent_op();
         app.software_fix.closing = true;
         assert!(!app.can_close_software_fix());
         app.software_fix.closing = false;
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn process_checks_do_not_wait_for_device_operations_and_cannot_overlap() {
         let mut app = App {
-            busy: true,
+            operation: OperationExecution::fixture(true, None, Vec::new(), 0, None),
             ..App::default()
         };
         assert!(app.update(Message::PollSoftwareFix).units() > 0);
@@ -179,7 +179,7 @@ mod tests {
         let _ = app.update(Message::SoftwareFixPolled(Ok(true)));
         assert!(!app.software_fix.checking);
         assert!(app.software_fix.running);
-        assert!(app.busy);
+        assert!(app.operation.is_running());
     }
     #[cfg(windows)]
     #[test]

@@ -15,11 +15,11 @@ impl App {
     pub(super) fn can_poll_device(&self) -> bool {
         self.device_poll_in_flight.is_none()
             && self.device_poll_deferred.is_empty()
-            && !self.busy
+            && !self.operation.is_running()
             && !self.installing_drivers
             && !self.adb_server_kill_in_flight
             && !self.software_fix.closing
-            && !self.direct_update_state.is_active()
+            && !self.operation.direct_update.is_active()
             && self.konabess.prepared.is_none()
     }
 

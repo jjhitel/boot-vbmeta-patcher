@@ -272,6 +272,7 @@ pub(crate) fn root_worker(
     let mut keep_staging = false;
     let manager_installed_pre_edl = if adb_ready_at_start {
         if let Some(path) = manager_apk.as_ref() {
+            phases.mark_writes_started();
             match install_root_manager_apk(path, &mut log) {
                 Ok(()) => true,
                 Err(e) => {
@@ -560,9 +561,11 @@ pub(crate) fn root_worker(
             // begins, the error path leaves the device in EDL rather than
             // rebooting a partial chain.
             if let Some(efi) = &root_efisp_efi {
+                phases.mark_writes_started();
                 writes_started = true;
                 provision_tb323fu_efisp(&mut session, Some(efi), &mut log)?;
             }
+            phases.mark_writes_started();
             writes_started = true;
             session
                 .flash_partition(
@@ -580,6 +583,7 @@ pub(crate) fn root_worker(
                     )
                 })?;
             if let Some(vbpath) = &artifacts.patched_vbmeta {
+                phases.mark_writes_started();
                 session
                     .flash_partition(&vbmeta_primary, vbpath, 0, ROOT_PARTITIONS_LUN, &mut log)
                     .map_err(|e| {

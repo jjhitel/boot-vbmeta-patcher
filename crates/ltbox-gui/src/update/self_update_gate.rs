@@ -12,7 +12,7 @@ impl App {
         if self.cleaning_temp {
             return Some(self.t("settings_cleanup_busy").to_string());
         }
-        let operation = if self.busy {
+        let operation = if self.operation.is_running() {
             self.busy_operation_label()
         } else if self.konabess.prepared.is_some() {
             // Inspection has ended, but the user still owns a staged EDL workflow.
@@ -29,12 +29,12 @@ impl App {
     pub(crate) fn can_install_self_update(&self) -> bool {
         self.update_dialog_source == Some(ltbox_core::install_source::InstallSource::Direct)
             && self.update_available.is_some()
-            && !self.direct_update_state.is_active()
+            && !self.operation.direct_update.is_active()
             && self.self_update_blocked_reason().is_none()
     }
 
     pub(super) fn can_exit_after_self_update(&self) -> bool {
-        self.direct_update_state == DirectUpdateState::Restarting
+        self.operation.direct_update == DirectUpdateState::Restarting
             && self.self_update_blocked_reason().is_none()
     }
 }
@@ -123,13 +123,12 @@ mod tests {
         ] {
             let mut app = ready_app();
             // The update dialog was opened before the device operation started.
-            app.busy = true;
-            app.busy_view = Some(view);
+            app.begin_silent_op(view);
             assert!(!app.can_install_self_update());
             assert_eq!(app.update(Message::InstallSelfUpdate).units(), 0);
-            assert_eq!(app.direct_update_state, DirectUpdateState::Ready);
-            assert!(app.busy);
-            app.busy = false;
+            assert_eq!(app.operation.direct_update, DirectUpdateState::Ready);
+            assert!(app.operation.is_running());
+            app.end_silent_op();
             assert!(app.can_install_self_update());
         }
     }
@@ -153,7 +152,7 @@ mod tests {
         });
         // Do not depend on the latest poll's connection status.
         assert_eq!(app.update(Message::InstallSelfUpdate).units(), 0);
-        assert_eq!(app.direct_update_state, DirectUpdateState::Ready);
+        assert_eq!(app.operation.direct_update, DirectUpdateState::Ready);
         app.konabess.prepared = None;
         assert!(app.can_install_self_update());
     }
@@ -164,11 +163,11 @@ mod tests {
         // Dropping the task does not run the network/filesystem worker.
         assert_eq!(app.update(Message::InstallSelfUpdate).units(), 1);
         for state in [DirectUpdateState::Updating, DirectUpdateState::Restarting] {
-            app.direct_update_state = state.clone();
+            app.operation.direct_update = state.clone();
             assert_eq!(app.update(Message::OpenUpdate).units(), 0);
             assert_eq!(app.update(Message::UpdateDialogClose).units(), 0);
             assert_eq!(app.update(Message::InstallSelfUpdate).units(), 0);
-            assert_eq!(app.direct_update_state, state);
+            assert_eq!(app.operation.direct_update, state);
             assert!(app.update_dialog_source.is_some());
         }
     }
@@ -204,14 +203,14 @@ mod tests {
         ];
         for state in [DirectUpdateState::Updating, DirectUpdateState::Restarting] {
             let mut app = ready_app();
-            app.direct_update_state = state.clone();
+            app.operation.direct_update = state.clone();
             for message in &inputs {
                 assert!(blocks_message(message), "unguarded input: {message:?}");
                 assert_eq!(app.update(message.clone()).units(), 0, "{message:?}");
-                assert!(!app.busy);
+                assert!(!app.operation.is_running());
                 assert!(!app.installing_drivers);
                 assert!(!app.cleaning_temp);
-                assert_eq!(app.direct_update_state, state);
+                assert_eq!(app.operation.direct_update, state);
             }
         }
     }
@@ -219,13 +218,16 @@ mod tests {
     #[test]
     fn self_update_failure_releases_gate_and_allows_retry() {
         let mut app = ready_app();
-        app.direct_update_state = DirectUpdateState::Updating;
+        app.operation.direct_update = DirectUpdateState::Updating;
         let failure = SelfUpdateFailure {
             kind: SelfUpdateFailureKind::Download,
             detail: "offline".into(),
         };
         drop(app.update(Message::SelfUpdateFinished(Err(failure.clone()))));
-        assert_eq!(app.direct_update_state, DirectUpdateState::Failed(failure));
+        assert_eq!(
+            app.operation.direct_update,
+            DirectUpdateState::Failed(failure)
+        );
         assert!(app.can_install_self_update());
         drop(app.update(Message::Root(RootMsg::RootFamily(Family::Magisk))));
         assert_eq!(app.root.family, Some(Family::Magisk));
@@ -236,19 +238,18 @@ mod tests {
         let mut app = ready_app();
         assert_eq!(app.update(Message::ExitAfterUpdate).units(), 0);
         assert_eq!(app.update(Message::SelfUpdateFinished(Ok(()))).units(), 0);
-        assert_eq!(app.direct_update_state, DirectUpdateState::Ready);
-        app.direct_update_state = DirectUpdateState::Updating;
+        assert_eq!(app.operation.direct_update, DirectUpdateState::Ready);
+        app.operation.direct_update = DirectUpdateState::Updating;
         assert_eq!(app.update(Message::ExitAfterUpdate).units(), 0);
         drop(app.update(Message::SelfUpdateFinished(Ok(()))));
         assert!(app.can_exit_after_self_update());
-        app.busy = true;
-        app.busy_view = Some(View::Root);
+        app.begin_silent_op(View::Root);
         assert!(!app.can_exit_after_self_update());
         // This task reschedules the exit check; completion messages still run.
         drop(app.update(Message::ExitAfterUpdate));
-        assert!(app.busy);
+        assert!(app.operation.is_running());
         drop(app.update(Message::Root(RootMsg::RootExecDone(Vec::new()))));
-        assert!(!app.busy);
+        assert!(!app.operation.is_running());
         assert!(app.can_exit_after_self_update());
         app.installing_drivers = true;
         assert!(!app.can_exit_after_self_update());

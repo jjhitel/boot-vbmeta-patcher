@@ -157,56 +157,57 @@ impl App {
                 .style(|t: &Theme| theme::tooltip_style(t, theme::shape::SM)),
             widget::tooltip::Position::Right,
         );
-        let driver_control: Element<'_, Message> = if self.busy || !kernel_mode_supported {
-            // Same geometry as the pick_list this replaces, at M3's disabled
-            // tones (38% content, 12% outline), so it reads as that control
-            // unavailable rather than as a different kind of field.
-            container(
-                text(current_driver_label)
-                    .size(d.text(SETTINGS_PICK_LIST_TEXT_SIZE))
-                    .style(|t: &Theme| iced::widget::text::Style {
-                        color: Some(with_alpha(pal_of(t).on_surface, 0.38)),
-                    }),
-            )
-            .padding(field_padding)
-            .width(Length::Fixed(d.width(SETTINGS_PICK_LIST_WIDTH)))
-            .style(|t: &Theme| {
-                let p = pal_of(t);
-                container::Style {
-                    background: None,
-                    border: iced::Border {
-                        color: with_alpha(p.on_surface, 0.12),
-                        width: 1.0,
-                        radius: theme::shape::SM.into(),
+        let driver_control: Element<'_, Message> =
+            if self.operation.is_running() || !kernel_mode_supported {
+                // Same geometry as the pick_list this replaces, at M3's disabled
+                // tones (38% content, 12% outline), so it reads as that control
+                // unavailable rather than as a different kind of field.
+                container(
+                    text(current_driver_label)
+                        .size(d.text(SETTINGS_PICK_LIST_TEXT_SIZE))
+                        .style(|t: &Theme| iced::widget::text::Style {
+                            color: Some(with_alpha(pal_of(t).on_surface, 0.38)),
+                        }),
+                )
+                .padding(field_padding)
+                .width(Length::Fixed(d.width(SETTINGS_PICK_LIST_WIDTH)))
+                .style(|t: &Theme| {
+                    let p = pal_of(t);
+                    container::Style {
+                        background: None,
+                        border: iced::Border {
+                            color: with_alpha(p.on_surface, 0.12),
+                            width: 1.0,
+                            radius: theme::shape::SM.into(),
+                        },
+                        ..Default::default()
+                    }
+                })
+                .into()
+            } else {
+                let driver_kernel_for_pick = driver_kernel.clone();
+                widget::pick_list(
+                    vec![driver_kernel, driver_userspace],
+                    Some(current_driver_label),
+                    move |selected| {
+                        let mode = if selected == driver_kernel_for_pick {
+                            ltbox_device::driver::QcomDriverMode::Kernel
+                        } else {
+                            ltbox_device::driver::QcomDriverMode::Userspace
+                        };
+                        Message::Settings(SettingsMsg::SetQcomDriverMode(mode))
                     },
-                    ..Default::default()
-                }
-            })
-            .into()
-        } else {
-            let driver_kernel_for_pick = driver_kernel.clone();
-            widget::pick_list(
-                vec![driver_kernel, driver_userspace],
-                Some(current_driver_label),
-                move |selected| {
-                    let mode = if selected == driver_kernel_for_pick {
-                        ltbox_device::driver::QcomDriverMode::Kernel
-                    } else {
-                        ltbox_device::driver::QcomDriverMode::Userspace
-                    };
-                    Message::Settings(SettingsMsg::SetQcomDriverMode(mode))
-                },
-            )
-            .text_size(d.text(SETTINGS_PICK_LIST_TEXT_SIZE))
-            // Forwarded to the dropdown items too (iced builds the menu
-            // with the pick_list's padding), lifting both the trigger and
-            // each option off the ~27 px they defaulted to.
-            .padding(field_padding)
-            .style(m3_pick_list_style)
-            .menu_style(m3_pick_list_menu_style)
-            .width(Length::Fixed(d.width(SETTINGS_PICK_LIST_WIDTH)))
-            .into()
-        };
+                )
+                .text_size(d.text(SETTINGS_PICK_LIST_TEXT_SIZE))
+                // Forwarded to the dropdown items too (iced builds the menu
+                // with the pick_list's padding), lifting both the trigger and
+                // each option off the ~27 px they defaulted to.
+                .padding(field_padding)
+                .style(m3_pick_list_style)
+                .menu_style(m3_pick_list_menu_style)
+                .width(Length::Fixed(d.width(SETTINGS_PICK_LIST_WIDTH)))
+                .into()
+            };
         let driver_label = row![
             text(self.t("settings_qcom_driver_mode").to_string()).size(d.text(13.0)),
             driver_help_icon,
@@ -388,8 +389,9 @@ impl App {
         // --- Maintenance card: clean leftover temp/scratch files ----------
         // Enabled only once a scan has found something to remove and no
         // device op is live (a live op owns the very dirs we'd delete).
-        let cleanup_enabled =
-            !self.busy && !self.cleaning_temp && matches!(self.temp_files_bytes, Some(b) if b > 0);
+        let cleanup_enabled = !self.operation.is_running()
+            && !self.cleaning_temp
+            && matches!(self.temp_files_bytes, Some(b) if b > 0);
         let cleanup_help_icon = widget::tooltip(
             container(text("?").size(d.text(11.0)).style(muted_style))
                 .padding([2, 6])

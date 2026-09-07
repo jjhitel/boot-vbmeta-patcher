@@ -28,7 +28,7 @@ impl App {
             };
             let can = self.unroot.can_next()
                 && !self.is_xiaoxin_pro13()
-                && !(self.busy && is_start)
+                && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
             wizard_nav_generic(
                 self.unroot.step > 0,

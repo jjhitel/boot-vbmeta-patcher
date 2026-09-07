@@ -7,7 +7,7 @@ impl App {
     pub(crate) fn update_reboot(&mut self, msg: RebootMsg) -> Task<Message> {
         match msg {
             RebootMsg::RebootRequest(target) => {
-                if self.busy {
+                if self.operation.is_running() {
                     return Task::none();
                 }
                 if !target.available_from(self.connection) {
@@ -31,7 +31,7 @@ impl App {
                 Task::none()
             }
             RebootMsg::RebootTo(target) => {
-                if self.busy {
+                if self.operation.is_running() {
                     return Task::none();
                 }
                 let conn = self.connection;

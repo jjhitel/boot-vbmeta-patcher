@@ -312,7 +312,7 @@ impl App {
         )
         .size(theme::text_size::BODY_LARGE);
 
-        let state_body: Element<'_, Message> = match &self.direct_update_state {
+        let state_body: Element<'_, Message> = match &self.operation.direct_update {
             DirectUpdateState::Ready => text(self.t("update_dialog_direct_body").to_string())
                 .size(theme::text_size::BODY_MEDIUM)
                 .style(muted_style)
@@ -374,7 +374,7 @@ impl App {
             .spacing(DIRECT_UPDATE_DIALOG_ACTION_SPACING)
             .align_y(iced::Alignment::Center);
         if matches!(
-            &self.direct_update_state,
+            &self.operation.direct_update,
             DirectUpdateState::Ready | DirectUpdateState::Failed(_)
         ) {
             actions = actions.push(
@@ -385,7 +385,8 @@ impl App {
                 m3_text_button(self.t("update_dialog_release_page").to_string())
                     .on_press(Message::OpenUpdateReleasePage),
             );
-            let install_label = if matches!(&self.direct_update_state, DirectUpdateState::Ready) {
+            let install_label = if matches!(&self.operation.direct_update, DirectUpdateState::Ready)
+            {
                 self.t("update_dialog_install")
             } else {
                 self.t("btn_retry")

@@ -971,6 +971,9 @@ fn run_country_change(
 
         // Flash once if the country code changed.
         if changed {
+            if let Some(phases) = phases {
+                phases.mark_writes_started();
+            }
             if let Err(e) = session.flash_partition(label, &patched_path, 0, lun, log) {
                 ltbox_core::live!(
                     log,

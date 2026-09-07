@@ -175,6 +175,7 @@ pub(crate) fn unroot_worker(
     };
 
     live!(log, "[Unroot] {} ({restored_label})", phases.marker(5));
+    phases.mark_writes_started();
     session
         .flash_partition(
             &root_image_label,
@@ -191,6 +192,7 @@ pub(crate) fn unroot_worker(
             )
         })?;
     if let Some(vbmeta_path) = &vbmeta_path {
+        phases.mark_writes_started();
         session
             .flash_partition(&vbm_label, vbmeta_path, 0, vbm_lun, &mut log)
             .map_err(|e| tr_args!("err_unroot_flash_failed", label = vbm_label, error = e))?;

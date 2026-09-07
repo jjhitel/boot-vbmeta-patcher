@@ -270,6 +270,7 @@ pub(crate) fn flash_parts_execute(
                         lun = row.lun.to_string()
                     )
                 );
+                phases.mark_writes_started();
                 if let Err(e) = session.flash_partition_at(
                     &row.label,
                     img,
@@ -307,6 +308,7 @@ pub(crate) fn flash_parts_execute(
                         sectors = row.num_sectors.to_string()
                     )
                 );
+                phases.mark_writes_started();
                 if let Err(e) = session.erase_partition_at(
                     &row.label,
                     row.lun,
@@ -789,6 +791,7 @@ pub(crate) fn flash_physical_execute(
                 file = file_name
             )
         );
+        phases.mark_writes_started();
         if let Err(e) = session.flash_physical_storage(*lun, img, &mut log) {
             ltbox_core::live!(
                 log,

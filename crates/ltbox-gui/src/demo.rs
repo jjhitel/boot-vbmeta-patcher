@@ -397,11 +397,12 @@ fn apply_wizard_scene(app: &mut App, flow: Flow, step: WizardStep) {
     app.country_popup_open = step == WizardStep::Country;
 
     if step == WizardStep::Flash {
-        let _ = app.begin_phased_op(View::Flash, OperationPhaseKind::Flash);
-        app.current_op_step = OperationPhaseKind::Flash
-            .firmware_progress_step()
-            .expect("flash operations have a firmware-writing phase")
-            - 1;
+        let reporter = app.begin_phased_op(View::Flash, OperationPhaseKind::Flash);
+        let _ = reporter.marker(
+            OperationPhaseKind::Flash
+                .firmware_progress_step()
+                .expect("flash operations have a firmware-writing phase"),
+        );
     }
 }
 
@@ -725,11 +726,11 @@ mod tests {
 
         assert_eq!(app.current_view, View::Flash);
         assert_eq!(app.flash.step, 5);
-        assert!(app.busy);
-        assert_eq!(app.busy_view, Some(View::Flash));
-        assert_eq!(app.active_op_kind, Some(OperationPhaseKind::Flash));
-        assert_eq!(app.current_op_step, 6);
-        assert_eq!(app.op_steps.len(), 9);
+        assert!(app.operation.is_running());
+        assert_eq!(app.operation.view(), Some(View::Flash));
+        assert_eq!(app.operation.phase_kind(), Some(OperationPhaseKind::Flash));
+        assert_eq!(app.operation.current_step(), 6);
+        assert_eq!(app.operation.steps.len(), 9);
         assert!(blocks_flash_execution(&app));
     }
 
@@ -742,9 +743,9 @@ mod tests {
 
         drop(app.update_flash(FlashMsg::FlashExecStart));
 
-        assert!(!app.busy);
-        assert!(app.op_steps.is_empty());
-        assert_eq!(app.active_op_kind, None);
+        assert!(!app.operation.is_running());
+        assert!(app.operation.steps.is_empty());
+        assert_eq!(app.operation.phase_kind(), None);
     }
 
     #[test]

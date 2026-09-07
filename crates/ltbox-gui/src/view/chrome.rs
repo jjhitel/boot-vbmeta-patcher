@@ -724,7 +724,7 @@ impl App {
                 status_row.push(text(format!("— {model_text}")).size(12).style(muted_style));
         }
         status_row = status_row.push(Space::new().width(Length::Fill));
-        if self.busy {
+        if self.operation.is_running() {
             status_row = status_row.push(
                 text(self.t("status_working").to_string())
                     .size(12)

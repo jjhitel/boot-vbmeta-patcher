@@ -89,6 +89,7 @@ pub(crate) fn sysupdate_worker(
             // were noise — the user only needs to see the outcome
             // (Uninstalled / Reinstalled / failure). Suppressed.
             ltbox_core::live!(log, "[SysUpdate] {}", phases.marker(2));
+            phases.mark_writes_started();
             adb.shell("settings put global ota_disable_automatic_update 1")
                 .map_err(|e| e.to_string())?;
             adb.shell("settings put secure lenovo_ota_new_version_found 0")
@@ -118,6 +119,7 @@ pub(crate) fn sysupdate_worker(
         SysUpdateAction::Enable => {
             // Command echoes suppressed — same rationale as Disable.
             ltbox_core::live!(log, "[SysUpdate] {}", phases.marker(2));
+            phases.mark_writes_started();
             adb.shell("settings put global ota_disable_automatic_update 0")
                 .map_err(|e| e.to_string())?;
 
@@ -555,6 +557,7 @@ pub(crate) fn sysupdate_worker(
             for (part_name, image) in &flash_plan {
                 let lun = rescue_partition_lun(part_name)
                     .ok_or_else(|| tr_args!("err_no_hardcoded_lun", partition = part_name))?;
+                phases.mark_writes_started();
                 if let Err(e) = session.flash_partition(part_name, image, 0, lun, &mut log) {
                     ltbox_core::live!(
                         log,

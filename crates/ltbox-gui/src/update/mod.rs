@@ -61,7 +61,41 @@ impl App {
     }
 
     pub(crate) fn update(&mut self, msg: Message) -> Task<Message> {
-        if self.direct_update_state.is_active() && self_update_gate::blocks_message(&msg) {
+        let msg = match msg {
+            Message::OperationEvent(id, message) => {
+                if self.operation.id() != Some(id) {
+                    return Task::none();
+                }
+                *message
+            }
+            message => message,
+        };
+        let previous = self.operation.id();
+        let task = self.dispatch_message(msg);
+        if self.operation.id() != previous
+            && let Some(id) = self.operation.bind_completion()
+        {
+            task.map(move |message| match message {
+                Message::OperationEvent(..) => message,
+                message => Message::OperationEvent(id, Box::new(message)),
+            })
+        } else {
+            task
+        }
+    }
+
+    fn dispatch_message(&mut self, msg: Message) -> Task<Message> {
+        // Input queued before a reservation (including native picker replies)
+        // must not start or reshape another workflow while its owner runs.
+        // Navigation and log/window controls remain available.
+        if self.operation.is_running()
+            && !matches!(msg, Message::Navigate(_))
+            && (self_update_gate::blocks_message(&msg)
+                || matches!(msg, Message::FileSelected(_) | Message::FolderSelected(_)))
+        {
+            return Task::none();
+        }
+        if self.operation.direct_update.is_active() && self_update_gate::blocks_message(&msg) {
             return Task::none();
         }
         #[cfg(feature = "demo")]
@@ -77,6 +111,7 @@ impl App {
             return Task::none();
         }
         match msg {
+            Message::OperationEvent(..) => unreachable!("operation envelopes are handled at entry"),
             Message::StartupDisclaimerToggled(checked) => {
                 self.startup_disclaimer_checked = checked;
             }
@@ -112,14 +147,16 @@ impl App {
             // Navigation
             Message::Noop => {}
             Message::ResumeBusyOperation => {
-                if let Some(view) = busy_navigation_target(self.busy, self.busy_view) {
+                if let Some(view) =
+                    busy_navigation_target(self.operation.is_running(), self.operation.view())
+                {
                     return self.update(Message::Navigate(view));
                 }
             }
             Message::Navigate(v) => {
                 if self.current_view == View::KonaBess
                     && v != View::KonaBess
-                    && !self.busy
+                    && !self.operation.is_running()
                     && !self.konabess_in_progress()
                 {
                     self.konabess.reset();
@@ -128,7 +165,7 @@ impl App {
                 // Keep wizard state during a running op or on the
                 // exec/Done screen — sidebar bounce mid-flash must
                 // not kick back to step 0.
-                let busy = self.busy;
+                let busy = self.operation.is_running();
                 // Skip the entry reset on the exec screen (mid-op) AND on
                 // the confirm/start screen, so a sidebar bounce returns the
                 // user to the confirm screen with their picks intact.
@@ -362,7 +399,10 @@ impl App {
             }
             Message::DismissError => self.error_msg = None,
             Message::KillAdbServer => {
-                if self.busy || self.installing_drivers || self.adb_server_kill_in_flight {
+                if self.operation.is_running()
+                    || self.installing_drivers
+                    || self.adb_server_kill_in_flight
+                {
                     return Task::none();
                 }
                 self.adb_server_kill_in_flight = true;
@@ -1091,13 +1131,13 @@ impl App {
             }
             Message::OpenUpdate => {
                 // A queued sidebar click must not reset Updating/Restarting to Ready.
-                if self.direct_update_state.is_active() {
+                if self.operation.direct_update.is_active() {
                     return Task::none();
                 }
                 let source = ltbox_core::install_source::install_source();
                 match source {
                     ltbox_core::install_source::InstallSource::Direct => {
-                        self.direct_update_state = DirectUpdateState::Ready;
+                        self.operation.direct_update = DirectUpdateState::Ready;
                         self.update_dialog_source = Some(source);
                     }
                     _ => {
@@ -1106,7 +1146,7 @@ impl App {
                 }
             }
             Message::UpdateDialogClose => {
-                if !self.direct_update_state.is_active() {
+                if !self.operation.direct_update.is_active() {
                     self.update_dialog_source = None;
                 }
             }
@@ -1118,7 +1158,8 @@ impl App {
                     return Task::none();
                 };
                 let tag = release.tag.clone();
-                self.direct_update_state = DirectUpdateState::Updating;
+                self.operation.start(None, OperationKind::SelfUpdate, None);
+                self.operation.direct_update = DirectUpdateState::Updating;
                 return Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
@@ -1136,36 +1177,49 @@ impl App {
                 );
             }
             Message::SelfUpdateFinished(result) => {
-                if self.direct_update_state != DirectUpdateState::Updating {
+                if self.operation.direct_update != DirectUpdateState::Updating {
                     return Task::none();
                 }
                 match result {
                     Ok(()) => {
-                        self.direct_update_state = DirectUpdateState::Restarting;
+                        self.operation.direct_update = DirectUpdateState::Restarting;
+                        let id = self.operation.id();
                         return Task::perform(
                             async {
                                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                             },
-                            |_| Message::ExitAfterUpdate,
+                            move |_| match id {
+                                Some(id) => {
+                                    Message::OperationEvent(id, Box::new(Message::ExitAfterUpdate))
+                                }
+                                None => Message::ExitAfterUpdate,
+                            },
                         );
                     }
                     Err(error) => {
-                        self.direct_update_state = DirectUpdateState::Failed(error);
+                        self.operation.finish(false);
+                        self.operation.direct_update = DirectUpdateState::Failed(error);
                     }
                 }
             }
             Message::ExitAfterUpdate => {
-                if self.direct_update_state != DirectUpdateState::Restarting {
+                if self.operation.direct_update != DirectUpdateState::Restarting {
                     return Task::none();
                 }
                 if !self.can_exit_after_self_update() {
                     // Defensive: keep processing completion messages until the
                     // existing operation has released the device/resources.
+                    let id = self.operation.id();
                     return Task::perform(
                         async {
                             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                         },
-                        |_| Message::ExitAfterUpdate,
+                        move |_| match id {
+                            Some(id) => {
+                                Message::OperationEvent(id, Box::new(Message::ExitAfterUpdate))
+                            }
+                            None => Message::ExitAfterUpdate,
+                        },
                     );
                 }
                 return iced::exit();

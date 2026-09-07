@@ -35,7 +35,7 @@ impl App {
                 self.t("btn_next").to_string()
             };
             let can = self.flash.can_next()
-                && !(self.busy && is_start)
+                && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
             wizard_nav_generic(
                 self.flash.step > 0,

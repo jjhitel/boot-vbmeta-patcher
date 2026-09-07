@@ -25,6 +25,7 @@ mod layout_constraints;
 mod loader;
 mod message;
 mod model;
+mod operation_execution;
 mod operation_phase;
 mod pickers;
 mod platform_installers;
@@ -52,6 +53,7 @@ pub(crate) use message::*;
 pub(crate) use model::country::*;
 pub(crate) use model::device::*;
 pub(crate) use model::wizard::*;
+use operation_execution::{OperationExecution, OperationKind};
 pub(crate) use operation_phase::*;
 use platform_installers::{install_desktop_file, install_udev_rules};
 pub(crate) use root_manager::{
@@ -1078,48 +1080,6 @@ pub(crate) fn fingerprint_token_match(haystack: &str, model: &str) -> bool {
     ltbox_core::model::fingerprint_model_match(haystack, model)
 }
 
-/// Parse `N/M` out of a log line. Returns `N` (1-indexed).
-/// Shape stays stable across locales as long as a `digit/digit` token
-/// is present in the line — but rejects fractional pairs like
-/// `12.3/45.6 MB` from downloader progress ticks. Without that gate,
-/// every `5%` progress emit looked like a phase marker and yanked
-/// `current_op_step` to whatever digit landed next to the slash,
-/// making the wizard race through every phase mid-download and snap
-/// back when the next real `Phase N/M` line arrived.
-fn parse_phase_marker(line: &str) -> Option<usize> {
-    let bytes = line.as_bytes();
-    for slash in 0..bytes.len() {
-        if bytes[slash] != b'/' {
-            continue;
-        }
-        let mut lhs = slash;
-        while lhs > 0 && bytes[lhs - 1].is_ascii_digit() {
-            lhs -= 1;
-        }
-        if lhs == slash {
-            continue;
-        }
-        let mut rhs = slash + 1;
-        while rhs < bytes.len() && bytes[rhs].is_ascii_digit() {
-            rhs += 1;
-        }
-        if rhs == slash + 1 {
-            continue;
-        }
-        // Decimal-point guard: `1.2/3.4 MB` digits-adjacent-to-slash
-        // are fragments of floats, not phase counters. Reject when
-        // either side touches a `.` instead of a separator.
-        if lhs > 0 && bytes[lhs - 1] == b'.' {
-            continue;
-        }
-        if rhs < bytes.len() && bytes[rhs] == b'.' {
-            continue;
-        }
-        return line[lhs..slash].parse::<usize>().ok();
-    }
-    None
-}
-
 fn concise_error_summary(error: &str, max_chars: usize) -> String {
     let summary = error
         .lines()
@@ -1936,10 +1896,7 @@ struct App {
     window_size_dirty: bool,
     // Device portrait derived at view time via `device_portrait()`.
     platform_supported: Option<bool>,
-    busy: bool,
-    /// View that owns the current busy op — labels the dashboard
-    /// "in progress" card with the sidebar name.
-    busy_view: Option<View>,
+    operation: OperationExecution,
     /// Persisted recent picks. Rendered as chips under every picker.
     recent_paths: settings_store::RecentPaths,
     /// When set, every loader picker bypasses to this path. Re-validated at exec.
@@ -2001,9 +1958,6 @@ struct App {
     /// Package-managed install source while the update instructions dialog is
     /// open, or `Direct` while the verified self-update dialog is open.
     update_dialog_source: Option<ltbox_core::install_source::InstallSource>,
-    /// Direct-download update lifecycle. Package-managed update dialogs never
-    /// read or mutate this state.
-    direct_update_state: DirectUpdateState,
     flash_parts: FlashPartsWizard,
     dump_parts: DumpPartsWizard,
     dump_phys: DumpPhysWizard,
@@ -2014,14 +1968,6 @@ struct App {
     /// read sites would silently pick a precedence if two ever got
     /// set. `match`-driven dispatch makes that bug class unreachable.
     advanced_wizard_open: AdvancedWizardOpen,
-    /// Phases of the running op. Populated at exec start, cleared on
-    /// `end_op`.
-    op_steps: Vec<OpStep>,
-    /// Index advanced by parsing `Phase N/M` markers in `log_push`.
-    current_op_step: usize,
-    /// Active phased-operation kind. Tracks firmware-progress eligibility
-    /// without relying on magic step indices in the view layer.
-    active_op_kind: Option<OperationPhaseKind>,
     /// Latest live firmware flash progress snapshot for the shared exec card.
     flash_progress: Option<ltbox_device::edl::FlashProgress>,
     log_popup_open: bool,
@@ -2164,8 +2110,7 @@ impl Default for App {
             window_size_last_save: std::time::Instant::now(),
             window_size_dirty: false,
             platform_supported: None,
-            busy: false,
-            busy_view: None,
+            operation: OperationExecution::default(),
             recent_paths: persisted.recent_paths.clone(),
             default_loader_path: persisted.default_loader_path.clone(),
             qcom_driver_mode,
@@ -2193,16 +2138,12 @@ impl Default for App {
             dual_usb_cable_phase: 0.0,
             update_available: None,
             update_dialog_source: None,
-            direct_update_state: DirectUpdateState::Ready,
             flash_parts: FlashPartsWizard::default(),
             dump_parts: DumpPartsWizard::default(),
             dump_phys: DumpPhysWizard::default(),
             flash_phys: FlashPhysWizard::default(),
             simple_flash: SimpleFlashWizard::default(),
             advanced_wizard_open: AdvancedWizardOpen::default(),
-            op_steps: Vec::new(),
-            current_op_step: 0,
-            active_op_kind: None,
             flash_progress: None,
             log_popup_open: false,
             #[cfg(feature = "demo")]
@@ -2331,7 +2272,6 @@ impl App {
     /// wgpu into TDR during long pbr flashes.
     fn log_push<S: Into<String>>(&mut self, line: S) {
         let s = line.into();
-        self.maybe_advance_op_step(&s);
         self.log_lines.push(s);
         self.trim_log();
         self.log_dirty = true;
@@ -2448,7 +2388,6 @@ impl App {
             if prev_tail.as_deref() == Some(line.as_str()) {
                 continue;
             }
-            self.maybe_advance_op_step(&line);
             prev_tail = Some(line.clone());
             accepted.push(line);
         }
@@ -2459,32 +2398,8 @@ impl App {
         }
     }
 
-    /// Advance `current_op_step` on a `Phase N/M` match. Silent no-op
-    /// when no op is in flight or the line has no marker.
-    fn maybe_advance_op_step(&mut self, line: &str) {
-        if self.op_steps.is_empty() {
-            return;
-        }
-        if let Some(n) = parse_phase_marker(line)
-            && n > 0
-        {
-            let cap = self.op_steps.len();
-            self.current_op_step = (n - 1).min(cap.saturating_sub(1));
-        }
-    }
-
-    /// Start a new long-running op. Sets `busy` + `busy_view`; drops
-    /// an `=`-bar into the log so consecutive runs are distinguishable.
-    fn begin_op(&mut self, v: View) {
-        self.busy = true;
-        self.busy_view = Some(v);
-        self.error_msg = None;
-        self.operation_error = None;
-        self.op_steps.clear();
-        self.current_op_step = 0;
-        self.active_op_kind = None;
-        self.clear_flash_progress();
-        // Single START banner; no closing rule.
+    fn begin_op(&mut self, view: View) {
+        self.begin_silent_op(view);
         let label = self.t("log_separator_start").to_string();
         self.log_separator(Some(&label));
     }
@@ -2497,9 +2412,14 @@ impl App {
                 .map(|key| self.t(key).to_string())
                 .collect(),
         );
-        self.begin_op(view);
-        self.active_op_kind = Some(kind);
-        self.op_steps = reporter.steps();
+        self.reset_operation_feedback();
+        self.operation.start(
+            Some(view),
+            OperationKind::Phased(kind),
+            Some(reporter.clone()),
+        );
+        let label = self.t("log_separator_start").to_string();
+        self.log_separator(Some(&label));
         reporter
     }
 
@@ -2518,43 +2438,30 @@ impl App {
         }
     }
 
-    /// Pairs with `begin_op`. END separator dropped per user request —
-    /// `begin_op` already prints a START banner and the per-op tail
-    /// (`Completed` / error popup) is sufficient to mark closure, so
-    /// the trailing rule was just visual noise.
     fn end_op(&mut self) {
-        if !self.op_steps.is_empty() {
-            self.current_op_step = self.op_steps.len() - 1;
-        }
-        self.busy = false;
-        self.busy_view = None;
-        self.active_op_kind = None;
+        self.operation.finish(true);
         self.clear_flash_progress();
     }
 
     fn fail_op(&mut self) {
-        self.busy = false;
-        self.busy_view = None;
-        self.active_op_kind = None;
+        self.operation.finish(false);
         self.clear_flash_progress();
     }
 
-    fn begin_silent_op(&mut self, v: View) {
-        self.busy = true;
-        self.busy_view = Some(v);
+    fn reset_operation_feedback(&mut self) {
         self.error_msg = None;
         self.operation_error = None;
-        self.op_steps.clear();
-        self.current_op_step = 0;
-        self.active_op_kind = None;
         self.clear_flash_progress();
+    }
+
+    fn begin_silent_op(&mut self, view: View) {
+        self.reset_operation_feedback();
+        self.operation
+            .start(Some(view), OperationKind::Unphased, None);
     }
 
     fn end_silent_op(&mut self) {
-        self.busy = false;
-        self.busy_view = None;
-        self.active_op_kind = None;
-        self.clear_flash_progress();
+        self.fail_op();
     }
 
     fn clear_flash_progress(&mut self) {
@@ -2564,17 +2471,18 @@ impl App {
 
     /// True only while a busy op is on the exact firmware-write progress phase.
     fn firmware_write_progress_phase_active(&self) -> bool {
-        if !self.busy {
+        if !self.operation.is_running() {
             return false;
         }
         let Some(step) = self
-            .active_op_kind
+            .operation
+            .phase_kind()
             .and_then(OperationPhaseKind::firmware_progress_step)
         else {
             return false;
         };
         // Overflow-safe: current_op_step is zero-based, step is one-based.
-        self.current_op_step.checked_add(1) == Some(step)
+        self.operation.current_step().checked_add(1) == Some(step)
     }
 
     fn refresh_flash_progress_snapshot(&mut self) {
@@ -2779,7 +2687,7 @@ impl App {
     }
 
     fn should_show_busy_progress_dialog(&self) -> bool {
-        self.busy
+        self.operation.is_running()
             // The temp-file cleanup borrows `busy` only to lock out racing
             // device ops; it's a sub-second maintenance action with its own
             // in-button "Cleaning…" state, so it gets no full-screen dialog.
@@ -2811,12 +2719,13 @@ impl App {
     }
 
     fn busy_operation_label(&self) -> String {
-        if self.busy_view == Some(View::Advanced)
+        if self.operation.view() == Some(View::Advanced)
             && let Some(label) = self.advanced_operation_label()
         {
             return label;
         }
-        self.busy_view
+        self.operation
+            .view()
             .map(|view| self.t(view.label_key()).to_string())
             .unwrap_or_else(|| self.t("status_working").to_string())
     }
@@ -2834,7 +2743,7 @@ impl App {
     /// `busy_advanced_generic` key carries a per-locale full sentence
     /// for this fallback.
     fn busy_body_override(&self) -> Option<String> {
-        if self.busy_view == Some(View::KonaBess) {
+        if self.operation.view() == Some(View::KonaBess) {
             let key = if self.konabess.prepared.is_some() {
                 "busy_konabess_cancel"
             } else {
@@ -2842,7 +2751,7 @@ impl App {
             };
             return Some(self.t(key).to_string());
         }
-        if self.busy_view != Some(View::Advanced) {
+        if self.operation.view() != Some(View::Advanced) {
             return None;
         }
         // Simple Flash is a full firmware flash, not a partition scan/write —
@@ -4317,43 +4226,20 @@ mod tests {
         assert!(!app.advanced_in_progress());
     }
 
-    // ---- parse_phase_marker decimal-point guard ----------------------
-    //
-    // Regression: downloader progress emits e.g.
-    // `[dl] kernelsu.ko [████····]  45% (1.2/2.7 MB, 0.5 MB/s)`.
-    // Old `parse_phase_marker` saw the `2/2` digits adjacent to the
-    // slash and yanked the wizard's `current_op_step` to phase 2 (or
-    // worse for `12.3/45.6 MB` which yields `3/4`). On every 5%
-    // bucket the wizard raced through phases mid-download then
-    // snapped back when the next real `Phase N/M` line arrived.
-    // These tests pin the new decimal-point sidestep.
-
     #[test]
-    fn phase_marker_real_phase_line_parses() {
-        assert_eq!(parse_phase_marker("[Root] Phase 3/7 — Reboot"), Some(3));
-        assert_eq!(parse_phase_marker("[Root] 단계 5/7 — 부트 패치"), Some(5),);
-    }
-
-    #[test]
-    fn phase_marker_decimal_progress_rejected() {
-        // Both sides surrounded by dots — clear float pair.
-        assert_eq!(
-            parse_phase_marker("[dl] kernelsu.ko 45% (12.3/45.6 MB, 0.5 MB/s)"),
-            None,
-        );
-        // Left side decimal only (`.2` before slash).
-        assert_eq!(
-            parse_phase_marker("[dl] manager.apk 45% (1.2/2.7 MB)"),
-            None,
-        );
-        // Right side decimal only (`5.` after slash digit).
-        assert_eq!(parse_phase_marker("[dl] file 12/5.6 MB"), None,);
-    }
-
-    #[test]
-    fn phase_marker_no_slash_returns_none() {
-        assert_eq!(parse_phase_marker("[Root] Manager APK installed"), None);
-        assert_eq!(parse_phase_marker("[dl] file 45%"), None);
+    fn logs_cannot_change_operation_progress() {
+        let mut app = App::default();
+        let reporter = app.begin_phased_op(View::Root, OperationPhaseKind::Root);
+        let _ = reporter.marker(3);
+        app.log_push("[dl] file 45% (12.3/45.6 MB)");
+        app.log_push("[old worker] Phase 7/8");
+        assert_eq!(app.operation.current_step(), 2);
+        app.fail_op();
+        let next = app.begin_phased_op(View::Root, OperationPhaseKind::Root);
+        let _ = reporter.marker(8);
+        assert_eq!(app.operation.current_step(), 0);
+        let _ = next.marker(2);
+        assert_eq!(app.operation.current_step(), 1);
     }
 
     #[test]
@@ -4965,7 +4851,7 @@ mod tests {
         };
         let _task = flash_app.update_flash_parts(FlashPartsMsg::FlashPartsBack);
         assert_eq!(flash_app.flash_parts.step, 0);
-        assert!(!flash_app.busy);
+        assert!(!flash_app.operation.is_running());
         assert_eq!(
             flash_app.advanced_wizard_open,
             AdvancedWizardOpen::FlashParts
@@ -4983,7 +4869,7 @@ mod tests {
         };
         let _task = dump_app.update_dump_parts(DumpPartsMsg::DumpPartsBack);
         assert_eq!(dump_app.dump_parts.step, 0);
-        assert!(!dump_app.busy);
+        assert!(!dump_app.operation.is_running());
         assert_eq!(dump_app.advanced_wizard_open, AdvancedWizardOpen::DumpParts);
     }
 
@@ -5026,8 +4912,8 @@ mod tests {
             ..App::default()
         };
         let _task = flash_app.update_flash_parts(FlashPartsMsg::FlashPartsBack);
-        assert!(flash_app.busy);
-        assert_eq!(flash_app.busy_view, Some(View::Reboot));
+        assert!(flash_app.operation.is_running());
+        assert_eq!(flash_app.operation.view(), Some(View::Reboot));
         assert_eq!(flash_app.advanced_wizard_open, AdvancedWizardOpen::None);
         assert_eq!(flash_app.flash_parts.entry_connection, None);
 
@@ -5043,8 +4929,8 @@ mod tests {
             ..App::default()
         };
         let _task = dump_app.update_dump_parts(DumpPartsMsg::DumpPartsBack);
-        assert!(dump_app.busy);
-        assert_eq!(dump_app.busy_view, Some(View::Reboot));
+        assert!(dump_app.operation.is_running());
+        assert_eq!(dump_app.operation.view(), Some(View::Reboot));
         assert_eq!(dump_app.advanced_wizard_open, AdvancedWizardOpen::None);
         assert_eq!(dump_app.dump_parts.entry_connection, None);
     }
@@ -5063,8 +4949,7 @@ mod tests {
     #[test]
     fn busy_progress_dialog_shows_only_without_inline_log_surface() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Reboot),
+            operation: OperationExecution::fixture(true, Some(View::Reboot), Vec::new(), 0, None),
             current_view: View::Reboot,
             ..App::default()
         };
@@ -5098,8 +4983,7 @@ mod tests {
     #[test]
     fn konabess_inspection_uses_busy_dialog_and_flash_uses_inline_exec_surface() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::KonaBess),
+            operation: OperationExecution::fixture(true, Some(View::KonaBess), Vec::new(), 0, None),
             current_view: View::KonaBess,
             ..App::default()
         };
@@ -5444,25 +5328,28 @@ mod tests {
     #[test]
     fn failed_operation_preserves_the_phase_that_failed() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Flash),
-            op_steps: vec![
-                OpStep {
-                    label: "one".into(),
-                },
-                OpStep {
-                    label: "two".into(),
-                },
-            ],
-            current_op_step: 0,
+            operation: OperationExecution::fixture(
+                true,
+                Some(View::Flash),
+                vec![
+                    OpStep {
+                        label: "one".into(),
+                    },
+                    OpStep {
+                        label: "two".into(),
+                    },
+                ],
+                0,
+                None,
+            ),
             ..App::default()
         };
 
         app.fail_op();
 
-        assert_eq!(app.current_op_step, 0);
-        assert!(!app.busy);
-        assert_eq!(app.busy_view, None);
+        assert_eq!(app.operation.current_step(), 0);
+        assert!(!app.operation.is_running());
+        assert_eq!(app.operation.view(), None);
     }
 
     #[test]
@@ -5485,9 +5372,7 @@ mod tests {
     #[test]
     fn firmware_flash_progress_label_visibility_and_format() {
         let app = |kind: OperationPhaseKind, step: usize, busy: bool, err: Option<&str>| App {
-            busy,
-            active_op_kind: Some(kind),
-            current_op_step: step,
+            operation: OperationExecution::fixture(busy, None, Vec::new(), step, Some(kind)),
             flash_progress: Some(ltbox_device::edl::FlashProgress {
                 partition: "super".into(),
                 percent: 42,
@@ -5544,22 +5429,26 @@ mod tests {
 
     #[test]
     fn flash_progress_clears_across_op_lifecycle() {
-        let mut app = App::default();
-        for clear in [
-            |a: &mut App| a.begin_op(View::Flash),
-            |a: &mut App| a.end_op(),
-            |a: &mut App| a.fail_op(),
-            |a: &mut App| a.begin_silent_op(View::Root),
-            |a: &mut App| a.end_silent_op(),
-        ] {
+        type Transition = (bool, fn(&mut App));
+        let transitions: [Transition; 5] = [
+            (false, |a| a.begin_op(View::Flash)),
+            (true, |a| a.end_op()),
+            (true, |a| a.fail_op()),
+            (false, |a| a.begin_silent_op(View::Root)),
+            (true, |a| a.end_silent_op()),
+        ];
+        for (running, clear) in transitions {
+            let mut app = App::default();
+            if running {
+                let _ = app.begin_phased_op(View::Flash, OperationPhaseKind::Flash);
+            }
             app.flash_progress = Some(ltbox_device::edl::FlashProgress {
                 partition: "super".into(),
                 percent: 10,
             });
-            app.active_op_kind = Some(OperationPhaseKind::Flash);
             clear(&mut app);
             assert!(app.flash_progress.is_none());
-            assert_eq!(app.active_op_kind, None);
+            assert_eq!(app.operation.phase_kind(), None);
         }
     }
 
@@ -5650,8 +5539,7 @@ mod tests {
     #[test]
     fn busy_operation_label_names_advanced_subtask() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Advanced),
+            operation: OperationExecution::fixture(true, Some(View::Advanced), Vec::new(), 0, None),
             current_view: View::Advanced,
             ..App::default()
         };
@@ -5668,7 +5556,8 @@ mod tests {
             app.t(AdvAction::FlashPartitions.label_key()).to_string()
         );
 
-        app.busy_view = Some(View::Reboot);
+        app.end_silent_op();
+        app.begin_silent_op(View::Reboot);
         assert_eq!(app.busy_operation_label(), app.t("nav_reboot").to_string());
     }
 
@@ -5687,7 +5576,9 @@ mod tests {
         let source = include_str!("view/dashboard.rs");
         assert!(source.contains("clickable_card("));
         assert!(source.contains("Message::ResumeBusyOperation"));
-        assert!(source.contains("busy_navigation_target(self.busy, self.busy_view).is_some()"));
+        assert!(source.contains(
+            "busy_navigation_target(self.operation.is_running(), self.operation.view()).is_some()"
+        ));
     }
 
     #[test]

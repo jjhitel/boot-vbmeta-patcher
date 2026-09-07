@@ -24,7 +24,7 @@ impl App {
                 Task::none()
             }
             SettingsMsg::SetQcomDriverMode(mode) => {
-                if self.busy {
+                if self.operation.is_running() {
                     return Task::none();
                 }
                 let mode = effective_qcom_driver_mode(mode);
@@ -97,7 +97,7 @@ impl App {
             SettingsMsg::CleanupTempFiles => {
                 // Skip while a flash/root op is live — it owns the very
                 // `work_*` dirs we'd be deleting. Also ignore a double-press.
-                if self.busy || self.cleaning_temp {
+                if self.operation.is_running() || self.cleaning_temp {
                     return Task::none();
                 }
                 self.cleaning_temp = true;
@@ -108,7 +108,7 @@ impl App {
                 // recreated. The progress dialog is suppressed for this
                 // lightweight op (see `should_show_busy_progress_dialog`); the
                 // button's own "Cleaning…" state is the only feedback.
-                self.busy = true;
+                self.operation.start(None, OperationKind::Cleanup, None);
                 Task::perform(
                     async {
                         tokio::task::spawn_blocking(
@@ -122,7 +122,7 @@ impl App {
             }
             SettingsMsg::CleanupDone => {
                 self.cleaning_temp = false;
-                self.busy = false;
+                self.operation.finish(false);
                 // Rescan so the size readout + enabled state reflect what
                 // actually remains (a locked dir could survive the sweep).
                 self.scan_temp_files_task()

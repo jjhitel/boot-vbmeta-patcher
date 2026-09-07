@@ -1,4 +1,6 @@
-use crate::{App, ConnectionStatus, DevicePollResult, KonaBessPrepared, Message, View};
+use crate::{
+    App, ConnectionStatus, DevicePollResult, KonaBessPrepared, Message, OperationExecution, View,
+};
 
 fn poll(serial: &str, model: &str) -> DevicePollResult {
     DevicePollResult {
@@ -72,13 +74,13 @@ fn empty_matching_completion_releases_gate_and_preserves_snapshot() {
 #[test]
 fn workflow_blockers_prevent_a_new_poll() {
     let mut app = App {
-        busy: true,
+        operation: OperationExecution::fixture(true, None, Vec::new(), 0, None),
         ..App::default()
     };
     assert_eq!(app.update(Message::PollDevice).units(), 0);
     assert_eq!(app.device_poll_sequence, 0);
 
-    app.busy = false;
+    app.end_silent_op();
     app.installing_drivers = true;
     assert_eq!(app.update(Message::PollDevice).units(), 0);
     assert_eq!(app.device_poll_sequence, 0);

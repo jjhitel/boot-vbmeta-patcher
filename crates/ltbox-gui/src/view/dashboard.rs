@@ -124,7 +124,7 @@ impl App {
         } else {
             &self.device_storage
         };
-        let op_text: Element<'_, Message> = if self.busy {
+        let op_text: Element<'_, Message> = if self.operation.is_running() {
             let base = self.t("dash_operation_in_progress").to_string();
             let label = format!("{} - {base}", self.busy_operation_label());
             text(label).size(d.text(13.0)).style(accent_style).into()
@@ -134,7 +134,8 @@ impl App {
                 .style(muted_style)
                 .into()
         };
-        let can_resume = busy_navigation_target(self.busy, self.busy_view).is_some();
+        let can_resume =
+            busy_navigation_target(self.operation.is_running(), self.operation.view()).is_some();
 
         // Title + divider dropped — sidebar already labels the active view,
         // so the duplicate header was eating vertical space without telling

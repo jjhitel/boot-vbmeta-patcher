@@ -37,14 +37,14 @@ impl App {
                 // Exiting a process while its updater may be between filesystem
                 // operations would defeat the rollback guarantee. Native close
                 // requests and the custom titlebar both route through here.
-                if self.direct_update_state.is_active() {
+                if self.operation.direct_update.is_active() {
                     return Task::none();
                 }
                 // Closing while a flash/root/probe (or any other busy op)
                 // is live would tear down the process mid-work. Refuse and
                 // surface the same "X is in progress" wording the progress
                 // dialog uses — no new locale keys required.
-                if self.busy {
+                if self.operation.is_running() {
                     let op_name = self.busy_operation_label();
                     self.error_msg = Some(ltbox_core::tr_args!(
                         "progress_dialog_body",
@@ -101,13 +101,12 @@ mod tests {
     #[test]
     fn window_close_refuses_while_busy() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Root),
+            operation: OperationExecution::fixture(true, Some(View::Root), Vec::new(), 0, None),
             ..App::default()
         };
         let _task = app.update_window(WindowMsg::WindowClose);
-        assert!(app.busy, "busy op must remain active");
-        assert_eq!(app.busy_view, Some(View::Root));
+        assert!(app.operation.is_running(), "busy op must remain active");
+        assert_eq!(app.operation.view(), Some(View::Root));
         // Reuses progress_dialog_body with the busy op label. Locale may be
         // non-English, so compare against the same formatter rather than
         // hard-coded English fragments.
@@ -121,14 +120,13 @@ mod tests {
     #[test]
     fn window_close_allows_when_idle() {
         let mut app = App {
-            busy: false,
-            busy_view: None,
+            operation: OperationExecution::fixture(false, None, Vec::new(), 0, None),
             error_msg: None,
             window_id: None,
             ..App::default()
         };
         let _task = app.update_window(WindowMsg::WindowClose);
         assert!(app.error_msg.is_none());
-        assert!(!app.busy);
+        assert!(!app.operation.is_running());
     }
 }
