@@ -334,11 +334,9 @@ pub fn firehose_write<T: QdlChan>(channel: &mut T, buf: &mut [u8]) -> anyhow::Re
         b.push(b'\n');
     }
 
-    match channel.write_all(&b) {
-        Ok(_) => Ok(()),
-        // Assume FH will hang after NAK..
-        Err(_) => firehose_reset(channel, &FirehoseResetMode::ResetToEdl, 0),
-    }
+    channel
+        .write_all(&b)
+        .context("Error sending Firehose packet")
 }
 
 /// Send a Firehose packet and check for ack/nak
@@ -563,11 +561,45 @@ pub fn firehose_program_storage_with_progress<T, F>(
     slot: u8,
     phys_part_idx: u8,
     start_sector: &str,
-    mut on_progress: F,
+    on_progress: F,
 ) -> anyhow::Result<()>
 where
     T: QdlChan,
     F: FnMut(u64, u64),
+{
+    firehose_program_storage_with_callbacks(
+        channel,
+        data,
+        label,
+        num_sectors,
+        slot,
+        phys_part_idx,
+        start_sector,
+        on_progress,
+        || {},
+    )
+}
+
+/// Write to Device storage with progress and write-entry notifications.
+///
+/// `on_write_start` runs once after constructing the program XML, immediately
+/// before attempting to send it. It therefore also reports an initial transport
+/// write that fails. Progress follows [`firehose_program_storage_with_progress`].
+pub fn firehose_program_storage_with_callbacks<T, F, S>(
+    channel: &mut T,
+    data: &mut impl Read,
+    label: &str,
+    num_sectors: usize,
+    slot: u8,
+    phys_part_idx: u8,
+    start_sector: &str,
+    mut on_progress: F,
+    mut on_write_start: S,
+) -> anyhow::Result<()>
+where
+    T: QdlChan,
+    F: FnMut(u64, u64),
+    S: FnMut(),
 {
     let mut sectors_left = num_sectors;
     let mut xml = firehose_xml_setup(
@@ -588,6 +620,7 @@ where
         ],
     )?;
 
+    on_write_start();
     firehose_write(channel, &mut xml)?;
 
     if firehose_read::<T>(channel, firehose_parser_ack_nak)? != FirehoseStatus::Ack {
@@ -616,7 +649,19 @@ where
                 chunk_size_sectors * channel.fh_config().storage_sector_size,
             )
         ];
-        let _ = data.read(&mut buf).unwrap();
+        let mut filled = 0;
+        while filled < buf.len() {
+            match data.read(&mut buf[filled..]) {
+                // Keep the existing sector-padding behavior at EOF.
+                Ok(0) => break,
+                Ok(n) => filled += n,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("Error reading data for partition {label}"));
+                }
+            }
+        }
 
         let n = channel
             .write(&buf)
@@ -801,5 +846,230 @@ pub fn firehose_get_default_sector_size(t: &str) -> Option<usize> {
         FirehoseStorageType::Nvme => Some(512),
         FirehoseStorageType::Ufs => Some(4096),
         FirehoseStorageType::Spinor => Some(4096),
+    }
+}
+
+#[cfg(test)]
+mod program_callback_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::io::{BufRead, Cursor};
+    use std::rc::Rc;
+    use types::FirehoseConfiguration;
+
+    #[derive(Debug, PartialEq)]
+    enum Event {
+        Start,
+        Program,
+        Reset,
+        Payload(usize),
+        Progress(u64, u64),
+    }
+
+    struct Channel {
+        config: FirehoseConfiguration,
+        responses: Cursor<Vec<u8>>,
+        events: Rc<RefCell<Vec<Event>>>,
+        payload: Vec<u8>,
+        fail_program: bool,
+    }
+
+    impl Read for Channel {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.responses.read(buf)
+        }
+    }
+
+    impl BufRead for Channel {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            let buf = self.responses.fill_buf()?;
+            if buf.is_empty() {
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+            Ok(buf)
+        }
+
+        fn consume(&mut self, amount: usize) {
+            self.responses.consume(amount);
+        }
+    }
+
+    impl Write for Channel {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if buf.windows(b"<program".len()).any(|w| w == b"<program") {
+                self.events.borrow_mut().push(Event::Program);
+                if self.fail_program {
+                    return Err(std::io::ErrorKind::BrokenPipe.into());
+                }
+            } else if buf.windows(b"<power".len()).any(|w| w == b"<power") {
+                self.events.borrow_mut().push(Event::Reset);
+            } else {
+                self.events.borrow_mut().push(Event::Payload(buf.len()));
+                self.payload.extend_from_slice(buf);
+            }
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl QdlChan for Channel {
+        fn fh_config(&self) -> &FirehoseConfiguration {
+            &self.config
+        }
+
+        fn mut_fh_config(&mut self) -> &mut FirehoseConfiguration {
+            &mut self.config
+        }
+    }
+
+    fn channel(fail_program: bool) -> Channel {
+        let responses = b"<data><response value=\"ACK\" /></data>".repeat(2);
+        Channel {
+            config: FirehoseConfiguration {
+                send_buffer_size: 512,
+                ..FirehoseConfiguration::default()
+            },
+            responses: Cursor::new(responses),
+            events: Rc::new(RefCell::new(Vec::new())),
+            payload: Vec::new(),
+            fail_program,
+        }
+    }
+
+    #[test]
+    fn program_start_precedes_transport_and_preserves_progress() {
+        for use_start_callback in [true, false] {
+            let mut channel = channel(false);
+            let events = Rc::clone(&channel.events);
+            let mut data = Cursor::new(vec![0x5a; 1024]);
+            let progress = |done, total| events.borrow_mut().push(Event::Progress(done, total));
+            if use_start_callback {
+                firehose_program_storage_with_callbacks(
+                    &mut channel,
+                    &mut data,
+                    "test",
+                    2,
+                    0,
+                    0,
+                    "8",
+                    progress,
+                    || events.borrow_mut().push(Event::Start),
+                )
+                .unwrap();
+            } else {
+                firehose_program_storage_with_progress(
+                    &mut channel,
+                    &mut data,
+                    "test",
+                    2,
+                    0,
+                    0,
+                    "8",
+                    progress,
+                )
+                .unwrap();
+            }
+            let mut expected = vec![
+                Event::Program,
+                Event::Progress(0, 1024),
+                Event::Payload(512),
+                Event::Progress(512, 1024),
+                Event::Payload(512),
+                Event::Progress(1024, 1024),
+            ];
+            if use_start_callback {
+                expected.insert(0, Event::Start);
+            }
+            assert_eq!(*events.borrow(), expected);
+        }
+    }
+
+    #[test]
+    fn program_start_is_reported_when_initial_transport_write_fails() {
+        let mut channel = channel(true);
+        let events = Rc::clone(&channel.events);
+        let result = firehose_program_storage_with_callbacks(
+            &mut channel,
+            &mut Cursor::new(vec![0; 512]),
+            "test",
+            1,
+            0,
+            0,
+            "8",
+            |done, total| events.borrow_mut().push(Event::Progress(done, total)),
+            || events.borrow_mut().push(Event::Start),
+        );
+        let error = result.unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+        assert_eq!(*events.borrow(), [Event::Start, Event::Program]);
+        assert!(channel.payload.is_empty());
+    }
+
+    #[test]
+    fn image_read_error_returns_with_write_start_retained() {
+        struct FailingReader;
+        impl Read for FailingReader {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::PermissionDenied.into())
+            }
+        }
+        let mut channel = channel(false);
+        let events = Rc::clone(&channel.events);
+        let error = firehose_program_storage_with_callbacks(
+            &mut channel,
+            &mut FailingReader,
+            "test",
+            1,
+            0,
+            0,
+            "8",
+            |done, total| events.borrow_mut().push(Event::Progress(done, total)),
+            || events.borrow_mut().push(Event::Start),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        assert!(error.to_string().contains("partition test"));
+        assert_eq!(
+            *events.borrow(),
+            [Event::Start, Event::Program, Event::Progress(0, 512)]
+        );
+        assert!(channel.payload.is_empty());
+    }
+
+    #[test]
+    fn short_reads_and_interruptions_preserve_image_and_final_padding() {
+        struct ShortReader {
+            data: Cursor<Vec<u8>>,
+            interrupt: bool,
+        }
+        impl Read for ShortReader {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.interrupt = !self.interrupt;
+                if self.interrupt {
+                    return Err(std::io::ErrorKind::Interrupted.into());
+                }
+                let len = buf.len().min(17);
+                self.data.read(&mut buf[..len])
+            }
+        }
+        let original: Vec<u8> = (0..733).map(|i| (i % 251) as u8).collect();
+        let mut data = ShortReader {
+            data: Cursor::new(original.clone()),
+            interrupt: false,
+        };
+        let mut channel = channel(false);
+        firehose_program_storage(&mut channel, &mut data, "test", 3, 0, 0, "8").unwrap();
+        let mut expected = original;
+        expected.resize(1536, 0);
+        assert_eq!(channel.payload, expected);
     }
 }

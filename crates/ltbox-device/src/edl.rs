@@ -14,6 +14,9 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+mod partition_flash;
+pub use partition_flash::{PartitionFlash, PartitionFlashError};
+
 use crate::driver::{QcomDriverMode, qcom_driver_mode};
 use ltbox_core::i18n::tr;
 

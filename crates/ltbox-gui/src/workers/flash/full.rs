@@ -1460,23 +1460,37 @@ pub(crate) fn flash_worker(
     // Phase 8/9 — Apply overlays and activate the target slot.
     live!(log, "[Flash] {}", phases.marker(8));
 
-    // Overlay ARB-patched boot/vbmeta_system by GPT name.
-    for (label, lun, patched) in &arb_patched {
-        live!(
-            log,
-            "[ARB] {}",
-            tr_args!("live_arb_flash_patched", label = label)
-        );
-        phases.mark_writes_started();
-        if let Err(e) = session.flash_partition(label, patched, 0, *lun, &mut log) {
-            let err = tr_args!(
-                "err_flash_arb_partition_failed",
-                label = label,
-                error = e.to_string()
+    // Check the entire final AVB overlay set against the post-rawprogram GPT
+    // before writing any member, including the converted vendor_boot and
+    // merged vbmeta in the Lenovo/testkey cross-region path.
+    let arb_images: Vec<_> = arb_patched
+        .iter()
+        .map(|(label, lun, image)| ltbox_device::edl::PartitionFlash {
+            label,
+            image,
+            slot: 0,
+            lun: *lun,
+        })
+        .collect();
+    if let Err(e) = session.flash_partition_batch(
+        &arb_images,
+        &mut log,
+        |label, _, log| {
+            live!(
+                log,
+                "[ARB] {}",
+                tr_args!("live_arb_flash_patched", label = label)
             );
-            restore_abl_best_effort(&mut session, &abl_restore, &mut log);
-            return Err(err);
-        }
+        },
+        || phases.mark_writes_started(),
+    ) {
+        let err = tr_args!(
+            "err_flash_arb_partition_failed",
+            label = e.partition,
+            error = e.source.to_string()
+        );
+        restore_abl_best_effort(&mut session, &abl_restore, &mut log);
+        return Err(err);
     }
 
     // Write the selected testkey bootloader on abl_a (the device backup in the
@@ -1587,28 +1601,43 @@ pub(crate) fn flash_worker(
             ("vendor_boot_a", output.vendor_boot.as_path()),
             ("vbmeta_a", output.vbmeta.as_path()),
         ];
-        for (label, image) in overlays {
-            let Some(lun) = ltbox_core::partition_lun::lun_for_partition(label) else {
-                return Err(tr_args!("err_region_flash_no_lun", label = label));
-            };
-            live!(
-                log,
-                "[Region] {}",
+        let images = overlays
+            .into_iter()
+            .map(|(label, image)| {
+                let lun = ltbox_core::partition_lun::lun_for_partition(label)
+                    .ok_or_else(|| tr_args!("err_region_flash_no_lun", label = label))?;
+                Ok(ltbox_device::edl::PartitionFlash {
+                    label,
+                    image,
+                    slot: 0,
+                    lun,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        session
+            .flash_partition_batch(
+                &images,
+                &mut log,
+                |label, image, log| {
+                    live!(
+                        log,
+                        "[Region] {}",
+                        tr_args!(
+                            "live_region_flashing_final",
+                            label = label,
+                            path = image.display().to_string()
+                        )
+                    );
+                },
+                || phases.mark_writes_started(),
+            )
+            .map_err(|e| {
                 tr_args!(
-                    "live_region_flashing_final",
-                    label = label,
-                    path = image.display().to_string()
-                )
-            );
-            phases.mark_writes_started();
-            if let Err(e) = session.flash_partition(label, image, 0, lun, &mut log) {
-                return Err(tr_args!(
                     "err_region_flash_failed",
-                    label = label,
-                    error = e.to_string()
-                ));
-            }
-        }
+                    label = e.partition,
+                    error = e.source.to_string()
+                )
+            })?;
     }
 
     // Country-code/channel patch is best-effort after firmware flash. A
