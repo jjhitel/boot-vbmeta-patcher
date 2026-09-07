@@ -405,8 +405,8 @@ impl App {
                 let version = self.root.version;
                 let file_path = self.root.file_path.clone();
                 let gui_kernel_version = self.root.kernel_version.clone();
-                let device_model = self.device_model.clone();
-                let conn = self.connection;
+                let device_model = self.device.model.clone();
+                let conn = self.device.connection;
                 // Folder must contain `xbl_s_devprg_ns.melf`; optional
                 // `keys/testkey_rsa{2048,4096}.pem` as KEY_MAP fallback.
                 let fw_folder = self.root.folder_path.clone();
@@ -435,7 +435,7 @@ impl App {
                 // on userdata otherwise and boot-loop after first wipe.
                 let preinit_device: String = if matches!(family, Some(Family::Magisk))
                     && matches!(
-                        self.connection,
+                        self.device.connection,
                         ConnectionStatus::Adb | ConnectionStatus::AdbRecovery
                     ) {
                     let (mountinfo, encrypt_type) = if let Some(mut adb) =

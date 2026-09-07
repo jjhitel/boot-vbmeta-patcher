@@ -128,7 +128,7 @@ impl App {
             let needs_device = matches!(self.adv_wizard.action, Some(AdvAction::DetectArb));
             let needs_system =
                 is_start && matches!(self.adv_wizard.action, Some(AdvAction::PatchDevinfo));
-            let system_ok = self.connection == ConnectionStatus::Adb;
+            let system_ok = self.device.connection == ConnectionStatus::Adb;
             // Change Country's picked loader must still fit the connected model at
             // Start (the device may have been swapped after the loader was picked).
             let loader_ok = !needs_system

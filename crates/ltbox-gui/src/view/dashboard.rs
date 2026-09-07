@@ -88,24 +88,24 @@ impl App {
 
     pub(crate) fn view_dashboard(&self) -> Element<'_, Message> {
         let d = self.density();
-        let model = if self.device_model.is_empty() {
+        let model = if self.device.model.is_empty() {
             "—"
         } else {
-            &self.device_model
+            &self.device.model
         };
-        let slot = if self.device_slot.is_empty() {
+        let slot = if self.device.slot.is_empty() {
             "—"
         } else {
-            &self.device_slot
+            &self.device.slot
         };
-        let firmware = if self.device_firmware.is_empty() {
+        let firmware = if self.device.firmware.is_empty() {
             "—"
         } else {
-            &self.device_firmware
+            &self.device.firmware
         };
         // i18n key (`arb_*`) or numeric from fastboot vars; translation
         // layer passes numerics through.
-        let arb_raw = self.device_arb.clone();
+        let arb_raw = self.device.arb.clone();
         let arb_display = if arb_raw.is_empty() {
             "—".to_string()
         } else if arb_raw.starts_with("arb_") {
@@ -114,15 +114,15 @@ impl App {
             arb_raw
         };
         let arb = arb_display.as_str();
-        let ram = if self.device_ram.is_empty() {
+        let ram = if self.device.ram.is_empty() {
             "—"
         } else {
-            &self.device_ram
+            &self.device.ram
         };
-        let storage = if self.device_storage.is_empty() {
+        let storage = if self.device.storage.is_empty() {
             "—"
         } else {
-            &self.device_storage
+            &self.device.storage
         };
         let op_text: Element<'_, Message> = if self.operation.is_running() {
             let base = self.t("dash_operation_in_progress").to_string();
@@ -154,7 +154,7 @@ impl App {
 
         // Unauthorized ADB wins over the platform warning — empty
         // `ro.boot.hardware` otherwise reads as "unsupported platform".
-        if self.connection == ConnectionStatus::AdbServerBlocking {
+        if self.device.connection == ConnectionStatus::AdbServerBlocking {
             let msg = text(self.t("dash_adb_server_blocking").to_string())
                 .size(d.text(theme::text_size::BODY_SMALL))
                 .style(warning_container_text_style)
@@ -176,7 +176,7 @@ impl App {
                         .align_y(iced::Alignment::Center),
                 ),
             );
-        } else if self.connection == ConnectionStatus::AdbUnauthorized {
+        } else if self.device.connection == ConnectionStatus::AdbUnauthorized {
             content = content.push(
                 self.warning_banner(
                     text(self.t("dash_adb_unauthorized").to_string())
@@ -185,7 +185,7 @@ impl App {
                         .width(Length::Fill),
                 ),
             );
-        } else if self.connection == ConnectionStatus::AdbSideload {
+        } else if self.device.connection == ConnectionStatus::AdbSideload {
             content = content.push(
                 self.warning_banner(
                     text(self.t("dash_adb_sideload").to_string())
@@ -194,7 +194,7 @@ impl App {
                         .width(Length::Fill),
                 ),
             );
-        } else if self.platform_supported == Some(false) {
+        } else if self.device.platform_supported == Some(false) {
             content = content.push(
                 self.warning_banner(
                     text(self.t("dash_unsupported_platform").to_string())
@@ -218,14 +218,14 @@ impl App {
                 .line_height(1.0),
         );
         device_col = device_col.push(Space::new().height(4));
-        if !self.device_market_name.is_empty() {
+        if !self.device.market_name.is_empty() {
             // Top of the card's hierarchy, but only just: `TITLE_LARGE` +
             // bold made a tablet model name shout over a card that is
             // mostly reference data. It keeps its original size and earns
             // the rank from `medium` weight plus the step down to
             // `BODY_MEDIUM` on the kv values below.
             device_col = device_col.push(
-                text(self.device_market_name.clone())
+                text(self.device.market_name.clone())
                     .size(d.text(theme::text_size::TITLE_MEDIUM))
                     .font(theme::emphasis::medium())
                     .line_height(1.0),
@@ -255,7 +255,7 @@ impl App {
         // — keeping it column-aligned with the row above (모델 / RAM
         // / 저장소 / 슬롯). Horizontal hover padding would push the
         // label right and break that alignment.
-        let firmware_kv: Element<'_, Message> = if self.device_firmware.is_empty() {
+        let firmware_kv: Element<'_, Message> = if self.device.firmware.is_empty() {
             info_kv(d, self.t("device_firmware"), firmware)
         } else {
             // Clicking firmware opens a small dropdown offering the QFIL
@@ -307,13 +307,13 @@ impl App {
         // already used `height(160)`; the empty branch now matches so the
         // dashboard layout doesn't reflow on connect.
         let card_height = d.size(DEVICE_CARD_HEIGHT);
-        let device_card_inner: Element<'_, Message> = if self.device_model.is_empty() {
+        let device_card_inner: Element<'_, Message> = if self.device.model.is_empty() {
             container(device_col)
                 .width(Length::Fill)
                 .height(Length::Fixed(card_height))
                 .into()
         } else {
-            let portrait: Element<'_, Message> = match device_portrait(&self.device_model) {
+            let portrait: Element<'_, Message> = match device_portrait(&self.device.model) {
                 DevicePortrait::Png(h) => iced::widget::image(h)
                     .height(Length::Fill)
                     .content_fit(iced::ContentFit::ScaleDown)
@@ -333,7 +333,7 @@ impl App {
                 .height(Length::Fill)
                 .center_x(Length::Fixed(portrait_w))
                 .center_y(Length::Fill);
-            let portrait_clickable: Element<'_, Message> = if self.device_serial.is_empty() {
+            let portrait_clickable: Element<'_, Message> = if self.device.serial.is_empty() {
                 portrait_box.into()
             } else {
                 // Same hover-tint pattern as the firmware kv so both

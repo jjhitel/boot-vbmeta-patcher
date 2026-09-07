@@ -484,7 +484,7 @@ mod tests {
 
         apply_dual_usb_advisory_scene(&mut app);
 
-        assert_eq!(app.device_model, "TB323FU");
+        assert_eq!(app.device.model, "TB323FU");
         assert_eq!(app.dual_usb_advisory_model(), Some("TB323FU"));
         assert!(app.dual_usb_help_open);
         assert!(!app.startup_disclaimer_open);
@@ -499,13 +499,13 @@ mod tests {
         };
         drop(app.update(Message::DevicePolled(scene.poll_result())));
 
-        assert!(app.device_serial.is_empty());
+        assert!(app.device.serial.is_empty());
         drop(app.begin_flash_region_auto());
 
         assert_eq!(app.flash.device_region, Some(DeviceRegion::Row));
         assert_eq!(app.flash.step, 1);
         assert!(app.flash_serial_prompt.is_none());
-        assert!(app.flash_region_pending.is_none());
+        assert!(app.queries.region_pending.is_none());
 
         app.flash.device_region = Some(DeviceRegion::Prc);
         app.flash.step = 4;
@@ -538,15 +538,15 @@ mod tests {
             }
 
             assert_eq!(app.current_view, expected_view);
-            assert_eq!(app.connection, ConnectionStatus::Adb);
-            assert_eq!(app.device_model, "TB520FU");
-            assert_eq!(app.device_market_name, "YOGA Pad Pro");
-            assert_eq!(app.device_ram, "12 GB");
-            assert_eq!(app.device_storage, "256 GB");
-            assert_eq!(app.device_slot, "_a");
-            assert_eq!(app.device_arb, "arb_yes");
-            assert_eq!(app.device_firmware, "ZUXOS_1.5.10.186_ST_260408");
-            assert_eq!(app.device_firmware_full, "ZUXOS_1.5.10.186_ST_260408");
+            assert_eq!(app.device.connection, ConnectionStatus::Adb);
+            assert_eq!(app.device.model, "TB520FU");
+            assert_eq!(app.device.market_name, "YOGA Pad Pro");
+            assert_eq!(app.device.ram, "12 GB");
+            assert_eq!(app.device.storage, "256 GB");
+            assert_eq!(app.device.slot, "_a");
+            assert_eq!(app.device.arb, "arb_yes");
+            assert_eq!(app.device.firmware, "ZUXOS_1.5.10.186_ST_260408");
+            assert_eq!(app.device.firmware_full, "ZUXOS_1.5.10.186_ST_260408");
 
             match expected_view {
                 View::Root => assert_eq!(app.root.step, 0),
@@ -683,15 +683,15 @@ mod tests {
     fn dashboard_identity_is_populated_but_unreadable_scenes_stay_empty() {
         let mut dashboard = App::default();
         drop(dashboard.update(Message::DevicePolled(Scene::Dashboard.poll_result())));
-        assert_eq!(dashboard.connection, ConnectionStatus::Adb);
-        assert_eq!(dashboard.device_model, "TB520FU");
-        assert_eq!(dashboard.device_market_name, "YOGA Pad Pro");
-        assert_eq!(dashboard.device_ram, "12 GB");
-        assert_eq!(dashboard.device_storage, "256 GB");
-        assert_eq!(dashboard.device_slot, "_a");
-        assert_eq!(dashboard.device_arb, "arb_yes");
-        assert_eq!(dashboard.device_firmware, "ZUXOS_1.5.10.186_ST_260408");
-        assert_eq!(dashboard.device_firmware_full, "ZUXOS_1.5.10.186_ST_260408");
+        assert_eq!(dashboard.device.connection, ConnectionStatus::Adb);
+        assert_eq!(dashboard.device.model, "TB520FU");
+        assert_eq!(dashboard.device.market_name, "YOGA Pad Pro");
+        assert_eq!(dashboard.device.ram, "12 GB");
+        assert_eq!(dashboard.device.storage, "256 GB");
+        assert_eq!(dashboard.device.slot, "_a");
+        assert_eq!(dashboard.device.arb, "arb_yes");
+        assert_eq!(dashboard.device.firmware, "ZUXOS_1.5.10.186_ST_260408");
+        assert_eq!(dashboard.device.firmware_full, "ZUXOS_1.5.10.186_ST_260408");
 
         for (scene, status) in [
             (Scene::DriversMissing, ConnectionStatus::None),
@@ -700,15 +700,15 @@ mod tests {
             let mut app = App::default();
             for _ in 0..2 {
                 drop(app.update(Message::DevicePolled(scene.poll_result())));
-                assert_eq!(app.connection, status);
-                assert!(app.device_model.is_empty());
-                assert!(app.device_market_name.is_empty());
-                assert!(app.device_ram.is_empty());
-                assert!(app.device_storage.is_empty());
-                assert!(app.device_slot.is_empty());
-                assert!(app.device_arb.is_empty());
-                assert!(app.device_firmware.is_empty());
-                assert!(app.device_firmware_full.is_empty());
+                assert_eq!(app.device.connection, status);
+                assert!(app.device.model.is_empty());
+                assert!(app.device.market_name.is_empty());
+                assert!(app.device.ram.is_empty());
+                assert!(app.device.storage.is_empty());
+                assert!(app.device.slot.is_empty());
+                assert!(app.device.arb.is_empty());
+                assert!(app.device.firmware.is_empty());
+                assert!(app.device.firmware_full.is_empty());
             }
         }
     }

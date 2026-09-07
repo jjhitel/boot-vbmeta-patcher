@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn deferred_duplicate_starts_and_late_picker_leave_owner_unchanged() {
         let mut app = App::default();
-        app.device_poll_deferred.extend([
+        app.queries.poll_deferred.extend([
             Message::Settings(crate::SettingsMsg::CleanupTempFiles),
             Message::Settings(crate::SettingsMsg::CleanupTempFiles),
             Message::FlashPhys(crate::FlashPhysMsg::FlashPhysExecStart),
@@ -172,7 +172,7 @@ mod tests {
         assert!(app.cleaning_temp);
         assert!(app.operation.is_running());
         assert_eq!(app.operation.view(), None);
-        assert!(app.device_poll_deferred.is_empty());
+        assert!(app.queries.poll_deferred.is_empty());
         // The inner cleanup dispatcher consumed the binding. An outer poll
         // batch cannot bind unrelated driver/connectivity replies to its ID.
         assert_eq!(app.operation.bind_completion(), None);

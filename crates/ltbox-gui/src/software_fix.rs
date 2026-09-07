@@ -158,11 +158,11 @@ mod tests {
         app.software_fix.closing = true;
         let _ = app.update(Message::Navigate(View::Root));
         assert_eq!(app.current_view, View::Dashboard);
-        assert_eq!(app.device_poll_deferred.len(), 1);
+        assert_eq!(app.queries.poll_deferred.len(), 1);
         assert_eq!(app.update(Message::PollDevice).units(), 0);
         let _ = app.update(Message::SoftwareFixClosed(Err(CloseError::Cancelled)));
         assert_eq!(app.current_view, View::Root);
-        assert!(app.device_poll_deferred.is_empty());
+        assert!(app.queries.poll_deferred.is_empty());
         assert!(app.software_fix.running);
     }
 

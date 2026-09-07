@@ -116,9 +116,9 @@ impl App {
                                 self.konabess.cleanup_prepared();
                                 let phases = self
                                     .begin_phased_op(View::KonaBess, OperationPhaseKind::KonaBess);
-                                let conn = self.connection;
+                                let conn = self.device.connection;
                                 let is_tb323fu = self.is_tb323fu();
-                                let device_model = self.device_model.clone();
+                                let device_model = self.device.model.clone();
                                 let ll = self.live_labels();
                                 let loader = std::path::PathBuf::from(loader);
                                 return Task::perform(
@@ -448,8 +448,11 @@ mod tests {
         std::fs::write(&prepared.vendor_boot, [1]).unwrap();
         std::fs::write(&prepared.vbmeta, [2]).unwrap();
         let mut app = App {
+            device: DeviceSnapshot {
+                connection: ConnectionStatus::Edl,
+                ..Default::default()
+            },
             current_view: View::KonaBess,
-            connection: ConnectionStatus::Edl,
             konabess: KonaBessWizard {
                 step: 1,
                 loader_path: Some(loader.display().to_string()),

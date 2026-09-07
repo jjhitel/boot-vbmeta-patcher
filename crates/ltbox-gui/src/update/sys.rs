@@ -134,8 +134,8 @@ impl App {
                 }
                 // Capture model for AVB fingerprint validation — prevents
                 // flashing firmware built for other models.
-                let device_model = self.device_model.clone();
-                let conn = self.connection;
+                let device_model = self.device.model.clone();
+                let conn = self.device.connection;
                 let phase_kind = match action {
                     SysUpdateAction::Disable => OperationPhaseKind::SysUpdateDisable,
                     SysUpdateAction::Enable => OperationPhaseKind::SysUpdateEnable,

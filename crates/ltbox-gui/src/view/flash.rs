@@ -108,7 +108,7 @@ impl App {
         // of the cards — the user briefly sees this, then lands on the target
         // step. The manual PRC/ROW cards are the fallback (probe failed /
         // inconclusive / skipped from the serial prompt).
-        if self.flash_region_pending.is_some() {
+        if self.queries.region_pending.is_some() {
             let probing = column![
                 material_circular_progress(MaterialProgressSize::Standard),
                 text(self.t("flash_region_detecting").to_string())

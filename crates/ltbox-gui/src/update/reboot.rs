@@ -10,10 +10,10 @@ impl App {
                 if self.operation.is_running() {
                     return Task::none();
                 }
-                if !target.available_from(self.connection) {
+                if !target.available_from(self.device.connection) {
                     self.error_msg = Some(format!(
                         "{:?} not reachable from {:?}",
-                        target, self.connection
+                        target, self.device.connection
                     ));
                     return Task::none();
                 }
@@ -34,7 +34,7 @@ impl App {
                 if self.operation.is_running() {
                     return Task::none();
                 }
-                let conn = self.connection;
+                let conn = self.device.connection;
                 if !target.available_from(conn) {
                     self.error_msg = Some(format!("{:?} not reachable from {:?}", target, conn));
                     return Task::none();

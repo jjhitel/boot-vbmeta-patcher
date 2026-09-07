@@ -67,8 +67,8 @@ impl App {
                 let Some(folder) = self.unroot.folder_path.clone() else {
                     return Task::none();
                 };
-                let conn = self.connection;
-                let device_model = self.device_model.clone();
+                let conn = self.device.connection;
+                let device_model = self.device.model.clone();
                 // Loader is decoupled from the backup folder — `folder`
                 // holds boot.img + vbmeta.img, the loader can live
                 // anywhere (Settings default, or whatever the user

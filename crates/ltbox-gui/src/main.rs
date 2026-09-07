@@ -21,6 +21,8 @@ mod backup;
 #[cfg(feature = "demo")]
 mod demo;
 mod device_name;
+mod device_queries;
+mod device_snapshot;
 mod layout_constraints;
 mod loader;
 mod message;
@@ -47,6 +49,8 @@ mod workers;
 pub(crate) use arb::{detect_arb_run, format_unix_date_utc, format_unix_timestamp_utc};
 pub(crate) use arb_overlay::*;
 pub(crate) use device_name::*;
+use device_queries::{DeviceQueries, LookupKind};
+use device_snapshot::DeviceSnapshot;
 pub(crate) use layout_constraints::*;
 pub(crate) use loader::*;
 pub(crate) use message::*;
@@ -1797,71 +1801,25 @@ struct App {
     reboot_confirm_target: Option<RebootTarget>,
     // Device & operation state
     software_fix: software_fix::State,
-    device_poll_sequence: u64,
-    device_poll_in_flight: Option<u64>,
-    device_poll_deferred: std::collections::VecDeque<Message>,
+    device: DeviceSnapshot,
+    queries: DeviceQueries,
     adb_server_kill_in_flight: bool,
-    connection: ConnectionStatus,
-    device_model: String,
-    device_slot: String,
-    /// Whether the live Fastboot connection is fastbootd. Only the
-    /// connection label reads it; see [`DevicePollResult`].
-    fastboot_userspace: bool,
-    device_firmware: String,
-    /// Untrimmed `ro.build.display.id`. Mirrors `device_firmware` but
-    /// keeps the leading device-model prefix so the OTA popup can
-    /// pass the full string to Lenovo's `querynewfirmware` endpoint
-    /// (the trimmed dashboard form would silently miss every match).
-    device_firmware_full: String,
-    device_arb: String,
-    device_ram: String,
-    device_storage: String,
-    device_market_name: String,
-    /// Last-seen device serial captured by `DevicePolled` (ADB or
-    /// fastboot). Empty when nothing reachable produces a serial. Drives
-    /// the device-info popup query — reset to empty on disconnect so a
-    /// stale serial cannot trigger an unrelated upstream lookup after a
-    /// hardware swap mid-session.
-    device_serial: String,
-    /// Session-scoped cache for the Lenovo PTSTPD device-info popup,
-    /// keyed by serial. Lives only as long as the App — process exit
-    /// drops the map, no persistence — so the user is not asked to
-    /// "remember" anything across runs and the same serial is queried
-    /// at most once per session.
-    device_info_cache: std::collections::HashMap<String, ltbox_core::lenovo_info::MachineInfo>,
     /// Device-info popup state. `Some((serial, state))` while open.
     device_info_popup: Option<(String, DeviceInfoState)>,
     /// Firmware-OTA popup state. `Some((serial, firmware_id, state))` while open.
     ota_popup: Option<(String, String, OtaPopupState)>,
-    /// Session OTA cache. `None` value = NoUpdate (still cached); errors not cached.
-    ota_cache:
-        std::collections::HashMap<(String, String), Option<ltbox_core::lenovo_ota::OtaUpdate>>,
     /// Selectable mirror of OTA changelog — `text` widget can't be selected.
     ota_changelog_editor: iced::widget::text_editor::Content,
     /// Firmware-version dropdown (QFIL Firmware / OTA Package) open state.
     firmware_menu_open: bool,
     /// QFIL-firmware popup state. `Some((serial, state))` while open.
     qfil_popup: Option<(String, QfilPopupState)>,
-    /// Session QFIL cache keyed by serial. Caches Global / NoPackage / Ready
-    /// (errors not cached), so reopening the popup never re-queries.
-    qfil_cache: std::collections::HashMap<String, QfilPopupState>,
-    /// `probe_id` of the in-flight on-entry region-detection query, or `None`
-    /// when idle. Doubles as the progress gate (the region step shows an indicator
-    /// while `Some`) and the staleness token — a result whose id doesn't match
-    /// has been superseded (re-entry, device swap, disconnect) and is ignored.
-    flash_region_pending: Option<u64>,
-    /// Monotonic counter minting a fresh `probe_id` for each region lookup.
-    flash_region_probe_seq: u64,
     /// Manual-serial prompt for region detection. `Some(buffer)` = open;
     /// buffer holds the in-progress input. Opened by the Auto FAB when no
     /// usable polled serial is available.
     flash_serial_prompt: Option<String>,
     /// PatchArb wizard's unix-timestamp input popup.
     arb_index_popup_open: bool,
-    /// `boot` / `vbmeta_system` rollback floors from the last
-    /// bootloader-mode poll. `None` on every other transport, which is
-    /// also what gates the Dashboard's rollback cell as clickable.
-    device_rollback_floors: Option<ltbox_patch::rollback::FastbootRollbackFloors>,
     rollback_popup_open: bool,
     /// Shared across both rows so `boot` and `vbmeta_system` stay
     /// directly comparable while cycling.
@@ -1895,7 +1853,6 @@ struct App {
     /// to disk. Cleared by `persist_window_size_if_due`.
     window_size_dirty: bool,
     // Device portrait derived at view time via `device_portrait()`.
-    platform_supported: Option<bool>,
     operation: OperationExecution,
     /// Persisted recent picks. Rendered as chips under every picker.
     recent_paths: settings_store::RecentPaths,
@@ -2065,35 +2022,17 @@ impl Default for App {
             adv_needs_country: false,
             region_target_popup_open: false,
             reboot_confirm_target: None,
-            connection: ConnectionStatus::default(),
             software_fix: software_fix::State::default(),
-            device_poll_sequence: 0,
-            device_poll_in_flight: None,
-            device_poll_deferred: std::collections::VecDeque::new(),
+            device: DeviceSnapshot::default(),
+            queries: DeviceQueries::default(),
             adb_server_kill_in_flight: false,
-            device_model: String::new(),
-            device_slot: String::new(),
-            fastboot_userspace: false,
-            device_firmware: String::new(),
-            device_firmware_full: String::new(),
-            device_arb: String::new(),
-            device_ram: String::new(),
-            device_storage: String::new(),
-            device_market_name: String::new(),
-            device_serial: String::new(),
-            device_info_cache: std::collections::HashMap::new(),
             device_info_popup: None,
             ota_popup: None,
-            ota_cache: std::collections::HashMap::new(),
             ota_changelog_editor: iced::widget::text_editor::Content::with_text(""),
             firmware_menu_open: false,
             qfil_popup: None,
-            qfil_cache: std::collections::HashMap::new(),
-            flash_region_pending: None,
-            flash_region_probe_seq: 0,
             flash_serial_prompt: None,
             arb_index_popup_open: false,
-            device_rollback_floors: None,
             rollback_popup_open: false,
             rollback_value_format: RollbackValueFormat::default(),
             manual_rollback_format: RollbackValueFormat::Unix,
@@ -2109,7 +2048,6 @@ impl Default for App {
                 .unwrap_or((DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)),
             window_size_last_save: std::time::Instant::now(),
             window_size_dirty: false,
-            platform_supported: None,
             operation: OperationExecution::default(),
             recent_paths: persisted.recent_paths.clone(),
             default_loader_path: persisted.default_loader_path.clone(),
@@ -2662,10 +2600,10 @@ impl App {
             // screen after it — survives as long as the device stays in EDL,
             // since the table reflects the live partition layout.
             W::FlashParts => {
-                self.connection == ConnectionStatus::Edl && !self.flash_parts.rows.is_empty()
+                self.device.connection == ConnectionStatus::Edl && !self.flash_parts.rows.is_empty()
             }
             W::DumpParts => {
-                self.connection == ConnectionStatus::Edl && !self.dump_parts.rows.is_empty()
+                self.device.connection == ConnectionStatus::Edl && !self.dump_parts.rows.is_empty()
             }
             // Physical storage: preserve the confirm screen (FlashPhys);
             // DumpPhys runs Select → Exec with no confirm screen to preserve.
@@ -2681,7 +2619,7 @@ impl App {
     /// confirm screen must survive a sidebar bounce. This mirrors the
     /// partition-table branch of `advanced_in_progress`.
     fn konabess_in_progress(&self) -> bool {
-        self.connection == ConnectionStatus::Edl
+        self.device.connection == ConnectionStatus::Edl
             && self.konabess.prepared.is_some()
             && matches!(self.konabess.step, 1 | 2)
     }
@@ -2832,10 +2770,10 @@ impl App {
     /// Map cached PTSTPD `SaleArea` for the connected device → `DeviceRegion`.
     /// `"CN"` → PRC, JSON null → ROW, anything else → `None`. Cache-only.
     fn inferred_flash_region(&self) -> Option<DeviceRegion> {
-        if self.device_serial.is_empty() {
+        if self.device.serial.is_empty() {
             return None;
         }
-        let info = self.device_info_cache.get(&self.device_serial)?;
+        let info = self.queries.info_cache.get(&self.device.serial)?;
         region_from_salearea(info)
     }
 
@@ -2859,7 +2797,7 @@ impl App {
             return Task::none();
         }
         if self.has_pollable_serial() {
-            let serial = self.device_serial.trim().to_string();
+            let serial = self.device.serial.trim().to_string();
             return self.start_region_probe(serial);
         }
         // Serial comes only from an ADB/fastboot poll; ask for it manually.
@@ -2870,9 +2808,7 @@ impl App {
     /// Mint a fresh probe id, mark it pending (shows the progress indicator), and spawn
     /// the lookup. The id is the staleness token the result handler checks.
     fn start_region_probe(&mut self, serial: String) -> Task<Message> {
-        self.flash_region_probe_seq += 1;
-        let id = self.flash_region_probe_seq;
-        self.flash_region_pending = Some(id);
+        let id = self.queries.start_region();
         self.spawn_auto_region_fetch(id, serial)
     }
 
@@ -2882,16 +2818,16 @@ impl App {
     /// read). When false, region detection falls back to the manual prompt.
     fn has_pollable_serial(&self) -> bool {
         matches!(
-            self.connection,
+            self.device.connection,
             ConnectionStatus::Adb | ConnectionStatus::AdbRecovery | ConnectionStatus::Fastboot
-        ) && self.device_serial.trim().starts_with("HA")
+        ) && self.device.serial.trim().starts_with("HA")
     }
 
     /// Off-thread PTSTPD fetch for auto region detection. Reuses the device
     /// -info cache when the serial is already known this session; otherwise
     /// fetches. Result arrives as `FlashMsg::FlashAutoRegionFetched`.
     fn spawn_auto_region_fetch(&self, id: u64, serial: String) -> Task<Message> {
-        if let Some(info) = self.device_info_cache.get(&serial).cloned() {
+        if let Some(info) = self.queries.info_cache.get(&serial).cloned() {
             return Task::done(Message::Flash(FlashMsg::FlashAutoRegionFetched(
                 id,
                 serial,
@@ -3048,10 +2984,10 @@ impl App {
     /// reporting `is-userspace` is named fastbootd — the two are the same
     /// connection everywhere else, so only the label distinguishes them.
     fn connection_label_key(&self) -> &'static str {
-        if self.connection == ConnectionStatus::Fastboot && self.fastboot_userspace {
+        if self.device.connection == ConnectionStatus::Fastboot && self.device.fastboot_userspace {
             "conn_fastbootd"
         } else {
-            self.connection.label_key()
+            self.device.connection.label_key()
         }
     }
 
@@ -3060,7 +2996,7 @@ impl App {
     /// and the user has neither permanently dismissed ("don't show again")
     /// nor session-closed ("close") it.
     fn dual_usb_advisory_model(&self) -> Option<&str> {
-        let m = self.device_model.as_str();
+        let m = self.device.model.as_str();
         let hidden = |list: &[String]| list.iter().any(|x| x.eq_ignore_ascii_case(m));
         if !m.is_empty()
             && is_dual_usbc_model(m)
@@ -3261,7 +3197,7 @@ impl App {
     /// contradict each other even if its bootloader did report two
     /// populated locations.
     pub(crate) fn rollback_detail_available(&self) -> bool {
-        self.device_rollback_floors.is_some() && is_rollback_protected_model(&self.device_model)
+        self.device.rollback_floors.is_some() && is_rollback_protected_model(&self.device.model)
     }
 
     fn is_nav_enabled(&self, view: View) -> bool {
@@ -3269,7 +3205,7 @@ impl App {
         if matches!(view, View::About) {
             return true;
         }
-        if self.platform_supported == Some(false) {
+        if self.device.platform_supported == Some(false) {
             return matches!(view, View::Dashboard | View::SystemUpdate | View::Settings);
         }
         true
@@ -3282,7 +3218,7 @@ impl App {
     /// site. New SKUs add a variant here once; the existing `is_tbXXX`
     /// methods are thin shims that delegate to this classifier.
     fn device_class(&self) -> DeviceClass {
-        DeviceClass::from_model(&self.device_model)
+        DeviceClass::from_model(&self.device.model)
     }
 
     /// Whether the polled device follows the TB320FC hardware path. These model
@@ -3305,7 +3241,7 @@ impl App {
     }
 
     fn is_xiaoxin_pro13(&self) -> bool {
-        ltbox_core::model::is_xiaoxin_pro13_model(&self.device_model)
+        ltbox_core::model::is_xiaoxin_pro13_model(&self.device.model)
     }
 
     /// True when `path`'s extension is the EDL loader form the connected device
@@ -3344,12 +3280,12 @@ impl App {
         let target = ltbox_patch::root_pipeline::resolve_root_image_target(
             ltbox_patch::root_pipeline::RootFamily::Magisk,
             matches!(unroot_type, UnrootType::APatchGki),
-            &self.device_model,
+            &self.device.model,
         );
         // The testkey efisp/GBL route leaves vbmeta out of the backup even for
         // a target vbmeta would normally hash, so it overrides the rebuild rule.
-        let with_vbmeta = !root_skips_avb_postprocess(&self.device_model)
-            && ltbox_patch::root_pipeline::root_run_rebuilds_vbmeta(target, &self.device_model);
+        let with_vbmeta = !root_skips_avb_postprocess(&self.device.model)
+            && ltbox_patch::root_pipeline::root_run_rebuilds_vbmeta(target, &self.device.model);
         match (target, with_vbmeta) {
             (ltbox_patch::root_pipeline::RootImageTarget::Boot, true) => {
                 self.t("unroot_folderdesc_boot_vbmeta")
@@ -3369,7 +3305,7 @@ impl App {
     fn loader_picker_desc(&self) -> String {
         if self.is_tb323fu() {
             self.t("loader_desc_tb323fu").to_string()
-        } else if self.device_model.is_empty() {
+        } else if self.device.model.is_empty() {
             self.t("loader_desc_unknown").to_string()
         } else {
             self.t("loader_desc_standard").to_string()
@@ -3392,7 +3328,7 @@ impl App {
     /// immediately bail with "no device" is just noise.
     fn device_reachable(&self) -> bool {
         matches!(
-            self.connection,
+            self.device.connection,
             ConnectionStatus::Adb
                 | ConnectionStatus::AdbRecovery
                 | ConnectionStatus::Fastboot
@@ -3427,9 +3363,9 @@ impl App {
     /// device-info cache for MTM + SaleArea when the device-info popup already
     /// fetched them this session; otherwise the worker fetches machine info
     /// itself. Result arrives as `Message::QfilFetched`.
-    fn spawn_qfil_fetch(&self, serial: String) -> Task<Message> {
+    fn spawn_qfil_fetch(&mut self, serial: String) -> Task<Message> {
         use ltbox_core::lenovo_info::FieldValue;
-        let cached: Option<(String, String)> = self.device_info_cache.get(&serial).map(|info| {
+        let cached: Option<(String, String)> = self.queries.info_cache.get(&serial).map(|info| {
             let field = |k: &str| match info.field(k) {
                 FieldValue::Value(s) => s,
                 _ => String::new(),
@@ -3437,14 +3373,15 @@ impl App {
             (field("MTM"), field("SaleArea"))
         });
         let serial_for_task = serial;
-        task_heavy(
+        let task = task_heavy(
             move || {
                 let outcome = resolve_qfil(&serial_for_task, cached);
                 (serial_for_task, outcome)
             },
             |(s, r)| Message::QfilFetched(s, r),
             |e| (String::new(), Err(e)),
-        )
+        );
+        self.queries.track_lookup(LookupKind::Qfil, task)
     }
 
     /// Bottom-of-sidebar pill linking to the GitHub release when a
@@ -3855,7 +3792,10 @@ mod tests {
         let want = manifest.to_string_lossy().to_string();
 
         let mut root_app = App {
-            device_model: "TB323FU".to_string(),
+            device: DeviceSnapshot {
+                model: "TB323FU".to_string(),
+                ..Default::default()
+            },
             ..App::default()
         };
         let _ = root_app.update(Message::Root(RootMsg::RootLoaderChosen(Some(
@@ -3865,7 +3805,10 @@ mod tests {
         assert!(root_app.error_msg.is_none());
 
         let mut unroot_app = App {
-            device_model: "TB323FU".to_string(),
+            device: DeviceSnapshot {
+                model: "TB323FU".to_string(),
+                ..Default::default()
+            },
             ..App::default()
         };
         let _ = unroot_app.update(Message::Unroot(UnrootMsg::UnrootLoaderChosen(Some(
@@ -3878,7 +3821,10 @@ mod tests {
 
         // A non-TB323FU keeps the .melf it was given.
         let mut other = App {
-            device_model: "TB320FC".to_string(),
+            device: DeviceSnapshot {
+                model: "TB320FC".to_string(),
+                ..Default::default()
+            },
             ..App::default()
         };
         let _ = other.update(Message::Root(RootMsg::RootLoaderChosen(Some(
@@ -3898,16 +3844,19 @@ mod tests {
     #[test]
     fn fastbootd_is_labelled_apart_from_the_bootloader() {
         let mut app = App {
-            connection: ConnectionStatus::Fastboot,
+            device: DeviceSnapshot {
+                connection: ConnectionStatus::Fastboot,
+                ..Default::default()
+            },
             ..App::default()
         };
         assert_eq!(app.connection_label_key(), "conn_fastboot");
 
-        app.fastboot_userspace = true;
+        app.device.fastboot_userspace = true;
         assert_eq!(app.connection_label_key(), "conn_fastbootd");
 
         // The flag only ever qualifies a Fastboot connection.
-        app.connection = ConnectionStatus::Adb;
+        app.device.connection = ConnectionStatus::Adb;
         assert_eq!(app.connection_label_key(), "conn_adb");
     }
 
@@ -4182,8 +4131,11 @@ mod tests {
             state: FlashRowState::Unchecked,
         };
         let mut app = App {
+            device: DeviceSnapshot {
+                connection: ConnectionStatus::Edl,
+                ..Default::default()
+            },
             advanced_wizard_open: AdvancedWizardOpen::FlashParts,
-            connection: ConnectionStatus::Edl,
             ..App::default()
         };
         // No scanned rows yet → not preserve-worthy.
@@ -4192,7 +4144,7 @@ mod tests {
         app.flash_parts.rows = vec![row()];
         assert!(app.advanced_in_progress());
         // Device left EDL → table is stale → reset.
-        app.connection = ConnectionStatus::None;
+        app.device.connection = ConnectionStatus::None;
         assert!(!app.advanced_in_progress());
 
         // Physical confirm screen preserves; DumpPhys (no confirm) + the grid
@@ -4840,8 +4792,11 @@ mod tests {
         );
 
         let mut flash_app = App {
+            device: DeviceSnapshot {
+                connection: ConnectionStatus::Edl,
+                ..Default::default()
+            },
             advanced_wizard_open: AdvancedWizardOpen::FlashParts,
-            connection: ConnectionStatus::Edl,
             flash_parts: FlashPartsWizard {
                 step: 1,
                 entry_connection: Some(ConnectionStatus::Edl),
@@ -4858,8 +4813,11 @@ mod tests {
         );
 
         let mut dump_app = App {
+            device: DeviceSnapshot {
+                connection: ConnectionStatus::Edl,
+                ..Default::default()
+            },
             advanced_wizard_open: AdvancedWizardOpen::DumpParts,
-            connection: ConnectionStatus::Edl,
             dump_parts: DumpPartsWizard {
                 step: 1,
                 entry_connection: Some(ConnectionStatus::Edl),
@@ -4902,7 +4860,10 @@ mod tests {
             advanced_wizard_open: AdvancedWizardOpen::FlashParts,
             // The live state is EDL after the scan; only the captured entry
             // state can prove that LTBox changed it.
-            connection: ConnectionStatus::Edl,
+            device: DeviceSnapshot {
+                connection: ConnectionStatus::Edl,
+                ..Default::default()
+            },
             flash_parts: FlashPartsWizard {
                 step: 1,
                 loader_path: Some(loader_path.clone()),
@@ -4918,8 +4879,11 @@ mod tests {
         assert_eq!(flash_app.flash_parts.entry_connection, None);
 
         let mut dump_app = App {
+            device: DeviceSnapshot {
+                connection: ConnectionStatus::Edl,
+                ..Default::default()
+            },
             advanced_wizard_open: AdvancedWizardOpen::DumpParts,
-            connection: ConnectionStatus::Edl,
             dump_parts: DumpPartsWizard {
                 step: 1,
                 loader_path: Some(loader_path),
@@ -5078,19 +5042,22 @@ mod tests {
         };
 
         let mut app = App {
-            device_model: "TB520FU".into(),
-            device_rollback_floors: Some(floors),
+            device: DeviceSnapshot {
+                model: "TB520FU".into(),
+                rollback_floors: Some(floors),
+                ..Default::default()
+            },
             ..App::default()
         };
         assert!(app.rollback_detail_available());
 
         // Exempt SKU — the cell reads "No", so it must not be clickable.
-        app.device_model = "TB322FC".into();
+        app.device.model = "TB322FC".into();
         assert!(!app.rollback_detail_available());
 
         // Any non-bootloader transport leaves the floors unset.
-        app.device_model = "TB520FU".into();
-        app.device_rollback_floors = None;
+        app.device.model = "TB520FU".into();
+        app.device.rollback_floors = None;
         assert!(!app.rollback_detail_available());
     }
 

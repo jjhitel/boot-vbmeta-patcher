@@ -25,27 +25,30 @@ mod unroot;
 mod window;
 
 impl App {
-    /// Drop fields and open views belonging to the previous physical device.
-    /// Serial-keyed lookup caches remain valid for their original device.
-    fn clear_device_snapshot(&mut self) {
-        self.device_model.clear();
-        self.device_slot.clear();
-        self.device_firmware.clear();
-        self.device_firmware_full.clear();
-        self.device_arb.clear();
-        self.device_rollback_floors = None;
+    /// Close device-bound views when identity or transport changes. Completed
+    /// serial-keyed caches remain available for their original device.
+    fn invalidate_device_views(&mut self) {
         self.rollback_popup_open = false;
-        self.device_ram.clear();
-        self.device_storage.clear();
-        self.device_market_name.clear();
-        self.device_serial.clear();
-        self.platform_supported = None;
-        self.fastboot_userspace = false;
         self.device_info_popup = None;
         self.ota_popup = None;
         self.qfil_popup = None;
         self.firmware_menu_open = false;
-        self.flash_region_pending = None;
+        self.queries.invalidate_context();
+    }
+
+    fn apply_device_snapshot(&mut self, poll: DevicePollResult) {
+        let change = self.device.apply(poll);
+        if change.reset_identity || change.context_changed {
+            self.invalidate_device_views();
+        }
+        if change.left_fastboot
+            || (self.device.connection != ConnectionStatus::Fastboot
+                && !self
+                    .device
+                    .is_fresh(device_snapshot::SnapshotField::RollbackFloors))
+        {
+            self.rollback_popup_open = false;
+        }
     }
 
     fn open_available_release_page(&self) {
@@ -62,6 +65,12 @@ impl App {
 
     pub(crate) fn update(&mut self, msg: Message) -> Task<Message> {
         let msg = match msg {
+            Message::DeviceLookupEvent(token, message) => {
+                if !self.queries.finish_lookup(token) {
+                    return Task::none();
+                }
+                *message
+            }
             Message::OperationEvent(id, message) => {
                 if self.operation.id() != Some(id) {
                     return Task::none();
@@ -102,15 +111,16 @@ impl App {
         if demo::blocks_device_action(self, &msg) {
             return Task::none();
         }
-        if (self.device_poll_in_flight.is_some()
+        if (self.queries.poll_in_flight.is_some()
             || self.adb_server_kill_in_flight
             || self.software_fix.closing)
             && device_poll_gate::defers_message(&msg)
         {
-            self.device_poll_deferred.push_back(msg);
+            self.queries.poll_deferred.push_back(msg);
             return Task::none();
         }
         match msg {
+            Message::DeviceLookupEvent(..) => unreachable!("lookup envelopes are handled at entry"),
             Message::OperationEvent(..) => unreachable!("operation envelopes are handled at entry"),
             Message::StartupDisclaimerToggled(checked) => {
                 self.startup_disclaimer_checked = checked;
@@ -188,7 +198,7 @@ impl App {
                     // remaining view branches are for other views. Clearing the
                     // pending token invalidates any lookup still in flight from
                     // a prior entry.
-                    self.flash_region_pending = None;
+                    self.queries.region_pending = None;
                     self.flash_serial_prompt = None;
                     return self.begin_flash_region_auto();
                 }
@@ -550,9 +560,7 @@ impl App {
                 if !self.can_poll_device() {
                     return Task::none();
                 }
-                self.device_poll_sequence = self.device_poll_sequence.wrapping_add(1);
-                let poll_id = self.device_poll_sequence;
-                self.device_poll_in_flight = Some(poll_id);
+                let poll_id = self.queries.start_poll();
                 #[cfg(feature = "demo")]
                 if let Some(result) = demo::poll_result(self) {
                     return Task::done(Message::DevicePollFinished(poll_id, Some(result)));
@@ -675,67 +683,7 @@ impl App {
             Message::DevicePolled(r) => {
                 let previous_dual_usb_advisory_model =
                     self.dual_usb_advisory_model().map(str::to_owned);
-                let prev_serial = self.device_serial.clone();
-                let prev_status = self.connection;
-                // A new nonempty serial identifies a new snapshot even without
-                // an intervening disconnected poll. Blank serials during mode
-                // transitions or transient read failures do not prove a swap.
-                if !r.serial.is_empty() && r.serial != self.device_serial {
-                    self.clear_device_snapshot();
-                }
-                self.connection = r.status;
-                if !r.model.is_empty() {
-                    self.device_model = r.model;
-                }
-                if !r.slot.is_empty() {
-                    self.device_slot = r.slot;
-                }
-                self.fastboot_userspace = r.fastboot_userspace;
-                if !r.firmware.is_empty() {
-                    self.device_firmware = r.firmware;
-                }
-                if !r.firmware_full.is_empty() {
-                    self.device_firmware_full = r.firmware_full;
-                }
-                if !r.arb.is_empty() {
-                    self.device_arb = r.arb;
-                }
-                // Same "don't clobber on a transient blank poll" rule as the
-                // fields above. `get_all_vars` can come back empty on a
-                // single cycle while the device is still very much in
-                // bootloader mode; assigning unconditionally made the popup
-                // close under the user mid-interaction. Floors are only
-                // dropped on a device swap or when leaving Fastboot.
-                if r.rollback_floors.is_some() {
-                    self.device_rollback_floors = r.rollback_floors;
-                } else if self.connection != ConnectionStatus::Fastboot {
-                    self.device_rollback_floors = None;
-                    self.rollback_popup_open = false;
-                }
-                if !r.ram.is_empty() {
-                    self.device_ram = r.ram;
-                }
-                if !r.storage.is_empty() {
-                    self.device_storage = r.storage;
-                }
-                if !r.market_name.is_empty() {
-                    self.device_market_name = r.market_name;
-                }
-                if !r.serial.is_empty() {
-                    self.device_serial = r.serial;
-                }
-                self.platform_supported = r.platform_supported;
-                if self.connection == ConnectionStatus::None {
-                    self.clear_device_snapshot();
-                }
-                // Device swap / disconnect mid-lookup: invalidate any in-flight
-                // region auto-detect so a prior device's PRC/ROW answer can't
-                // apply to the one now connected. Also covers a swap to a
-                // serial-less state (e.g. EDL) where `device_serial` is kept
-                // but the connection changed.
-                if self.device_serial != prev_serial || self.connection != prev_status {
-                    self.flash_region_pending = None;
-                }
+                self.apply_device_snapshot(r);
 
                 let dual_usb_advisory_model = self.dual_usb_advisory_model().map(str::to_owned);
                 if !self.startup_disclaimer_open
@@ -748,17 +696,18 @@ impl App {
                 }
             }
             Message::DeviceInfoOpen => {
-                let serial = self.device_serial.trim().to_string();
+                self.queries.cancel_lookup(LookupKind::Info);
+                let serial = self.device.serial.trim().to_string();
                 if serial.is_empty() {
                     return Task::none();
                 }
-                if self.device_info_cache.contains_key(&serial) {
+                if self.queries.info_cache.contains_key(&serial) {
                     self.device_info_popup = Some((serial, DeviceInfoState::Ready));
                     return Task::none();
                 }
                 self.device_info_popup = Some((serial.clone(), DeviceInfoState::Loading));
                 let serial_for_task = serial.clone();
-                return task_heavy(
+                let task = task_heavy(
                     move || {
                         let result = ltbox_core::lenovo_info::fetch_machine_info(&serial_for_task)
                             .map_err(|e| e.to_string());
@@ -767,6 +716,7 @@ impl App {
                     |(s, r)| Message::DeviceInfoFetched(s, r),
                     |e| (String::new(), Err(e)),
                 );
+                return self.queries.track_lookup(LookupKind::Info, task);
             }
             Message::DeviceInfoFetched(serial, result) => {
                 if serial.is_empty() {
@@ -786,7 +736,7 @@ impl App {
                         // Cache only. Flash region is no longer preselected
                         // silently here — the Flash wizard's Auto FAB is the
                         // explicit entry point for SaleArea-driven detection.
-                        self.device_info_cache.insert(serial.clone(), info);
+                        self.queries.info_cache.insert(serial.clone(), info);
                         if matches!(&self.device_info_popup, Some((s, _)) if s == &serial) {
                             self.device_info_popup = Some((serial, DeviceInfoState::Ready));
                         }
@@ -804,7 +754,7 @@ impl App {
                 };
                 self.device_info_popup = Some((serial.clone(), DeviceInfoState::Loading));
                 let serial_for_task = serial;
-                return task_heavy(
+                let task = task_heavy(
                     move || {
                         let result = ltbox_core::lenovo_info::fetch_machine_info(&serial_for_task)
                             .map_err(|e| e.to_string());
@@ -813,13 +763,16 @@ impl App {
                     |(s, r)| Message::DeviceInfoFetched(s, r),
                     |e| (String::new(), Err(e)),
                 );
+                return self.queries.track_lookup(LookupKind::Info, task);
             }
             Message::DeviceInfoClose => {
+                self.queries.cancel_lookup(LookupKind::Info);
                 self.device_info_popup = None;
             }
             Message::OtaOpen => {
+                self.queries.cancel_lookup(LookupKind::Ota);
                 self.firmware_menu_open = false;
-                let serial = self.device_serial.trim().to_string();
+                let serial = self.device.serial.trim().to_string();
                 // Pass the untrimmed firmware id to the OTA endpoint —
                 // Lenovo's `querynewfirmware` keys against the full
                 // `ro.build.display.id` value (model prefix included),
@@ -827,10 +780,10 @@ impl App {
                 // miss every match. Fall back to the trimmed dashboard
                 // value only when the full mirror is empty (older poll
                 // result that never populated the field).
-                let firmware_id = if !self.device_firmware_full.is_empty() {
-                    self.device_firmware_full.trim().to_string()
+                let firmware_id = if !self.device.firmware_full.is_empty() {
+                    self.device.firmware_full.trim().to_string()
                 } else {
-                    self.device_firmware.trim().to_string()
+                    self.device.firmware.trim().to_string()
                 };
                 if serial.is_empty() || firmware_id.is_empty() {
                     return Task::none();
@@ -841,7 +794,7 @@ impl App {
                 // network round-trip every time the user reopens it
                 // within the same session.
                 let key = (serial.clone(), firmware_id.clone());
-                if let Some(cached) = self.ota_cache.get(&key).cloned() {
+                if let Some(cached) = self.queries.ota_cache.get(&key).cloned() {
                     let new_state = match cached {
                         Some(update) => OtaPopupState::Ready(update),
                         None => OtaPopupState::NoUpdate,
@@ -854,15 +807,16 @@ impl App {
                     Some((serial.clone(), firmware_id.clone(), OtaPopupState::Loading));
                 let s = serial.clone();
                 let f = firmware_id.clone();
-                return task_heavy(
+                let task = task_heavy(
                     move || {
                         let result =
                             ltbox_core::lenovo_ota::fetch_ota(&s, &f).map_err(|e| e.to_string());
                         (s, f, result)
                     },
                     |(s, f, r)| Message::OtaFetched(s, f, r),
-                    |e| (String::new(), String::new(), Err(e)),
+                    move |e| (serial, firmware_id, Err(e)),
                 );
+                return self.queries.track_lookup(LookupKind::Ota, task);
             }
             Message::OtaFetched(serial, firmware_id, result) => {
                 // Stale serial/firmware swap (device unplugged mid-fetch
@@ -888,10 +842,10 @@ impl App {
                 let key = (serial.clone(), firmware_id.clone());
                 match &new_state {
                     OtaPopupState::Ready(u) => {
-                        self.ota_cache.insert(key, Some(u.clone()));
+                        self.queries.ota_cache.insert(key, Some(u.clone()));
                     }
                     OtaPopupState::NoUpdate => {
-                        self.ota_cache.insert(key, None);
+                        self.queries.ota_cache.insert(key, None);
                     }
                     _ => {}
                 }
@@ -899,6 +853,7 @@ impl App {
                 self.ota_popup = Some((serial, firmware_id, new_state));
             }
             Message::OtaClose => {
+                self.queries.cancel_lookup(LookupKind::Ota);
                 self.ota_popup = None;
                 self.ota_changelog_editor = iced::widget::text_editor::Content::with_text("");
             }
@@ -916,15 +871,16 @@ impl App {
                     Some((serial.clone(), firmware_id.clone(), OtaPopupState::Loading));
                 let s = serial.clone();
                 let f = firmware_id.clone();
-                return task_heavy(
+                let task = task_heavy(
                     move || {
                         let result =
                             ltbox_core::lenovo_ota::fetch_ota(&s, &f).map_err(|e| e.to_string());
                         (s, f, result)
                     },
                     |(s, f, r)| Message::OtaFetched(s, f, r),
-                    |e| (String::new(), String::new(), Err(e)),
+                    move |e| (serial, firmware_id, Err(e)),
                 );
+                return self.queries.track_lookup(LookupKind::Ota, task);
             }
             Message::OpenUrl(url) => {
                 // Same rationale as OtaOpenDownload: hand the URL to the host's
@@ -952,13 +908,14 @@ impl App {
                 self.firmware_menu_open = open;
             }
             Message::QfilOpen => {
+                self.queries.cancel_lookup(LookupKind::Qfil);
                 self.firmware_menu_open = false;
-                let serial = self.device_serial.trim().to_string();
+                let serial = self.device.serial.trim().to_string();
                 if serial.is_empty() {
                     return Task::none();
                 }
                 // Cache hit → restore the prior result without re-querying.
-                if let Some(cached) = self.qfil_cache.get(&serial).cloned() {
+                if let Some(cached) = self.queries.qfil_cache.get(&serial).cloned() {
                     self.qfil_popup = Some((serial, cached));
                     return Task::none();
                 }
@@ -985,13 +942,16 @@ impl App {
                 };
                 // Cache every non-error outcome so reopening never re-queries.
                 if !matches!(new_state, QfilPopupState::Error(_)) {
-                    self.qfil_cache.insert(serial.clone(), new_state.clone());
+                    self.queries
+                        .qfil_cache
+                        .insert(serial.clone(), new_state.clone());
                 }
                 if matches!(&self.qfil_popup, Some((s, _)) if s == &serial) {
                     self.qfil_popup = Some((serial, new_state));
                 }
             }
             Message::QfilClose => {
+                self.queries.cancel_lookup(LookupKind::Qfil);
                 self.qfil_popup = None;
             }
             Message::QfilRetry => {
@@ -1050,7 +1010,7 @@ impl App {
             Message::RollbackDetailOpen => {
                 // Guarded so a stale click during a transport change can't
                 // open a popup with nothing to show.
-                if self.device_rollback_floors.is_some() {
+                if self.device.rollback_floors.is_some() {
                     self.rollback_popup_open = true;
                     self.rollback_value_format = RollbackValueFormat::default();
                 }

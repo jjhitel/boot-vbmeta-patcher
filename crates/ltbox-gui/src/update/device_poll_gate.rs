@@ -13,8 +13,8 @@ pub(super) fn defers_message(message: &Message) -> bool {
 
 impl App {
     pub(super) fn can_poll_device(&self) -> bool {
-        self.device_poll_in_flight.is_none()
-            && self.device_poll_deferred.is_empty()
+        self.queries.poll_in_flight.is_none()
+            && self.queries.poll_deferred.is_empty()
             && !self.operation.is_running()
             && !self.installing_drivers
             && !self.adb_server_kill_in_flight
@@ -29,10 +29,9 @@ impl App {
         result: Option<DevicePollResult>,
     ) -> Task<Message> {
         // A duplicate or older completion must not release the current lease.
-        if self.device_poll_in_flight != Some(id) {
+        if !self.queries.finish_poll(id) {
             return Task::none();
         }
-        self.device_poll_in_flight = None;
         let apply = self.can_poll_device();
         let task = if apply && let Some(result) = result {
             self.update(Message::DevicePolled(result))
@@ -45,18 +44,18 @@ impl App {
     }
 
     pub(crate) fn resume_after_device_poll(&mut self) -> Task<Message> {
-        if self.device_poll_in_flight.is_some()
+        if self.queries.poll_in_flight.is_some()
             || self.adb_server_kill_in_flight
             || self.software_fix.closing
         {
             return Task::none();
         }
         let mut tasks = Vec::new();
-        while self.device_poll_in_flight.is_none()
+        while self.queries.poll_in_flight.is_none()
             && !self.adb_server_kill_in_flight
             && !self.software_fix.closing
         {
-            let Some(message) = self.device_poll_deferred.pop_front() else {
+            let Some(message) = self.queries.poll_deferred.pop_front() else {
                 break;
             };
             // Dispatch synchronously in input order so busy reservations and

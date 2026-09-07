@@ -432,7 +432,8 @@ impl App {
         // cached; clicking copies the unmodified `data` JSON to the
         // clipboard and surfaces a toast.
         let copy_payload: Option<String> = self
-            .device_info_cache
+            .queries
+            .info_cache
             .get(&serial)
             .map(|i| i.data_pretty.clone());
         let copy_glyph = text("⧉").size(16);
@@ -489,7 +490,7 @@ impl App {
                 self.popup_error_view("device_info_popup_error", e, Message::DeviceInfoRetry)
             }
             DeviceInfoState::Ready => {
-                let info = match self.device_info_cache.get(&serial) {
+                let info = match self.queries.info_cache.get(&serial) {
                     Some(i) => i,
                     None => {
                         return container(text("")).into();
@@ -885,10 +886,10 @@ impl App {
     /// meaningless without knowing which partition it guards and what
     /// the number represents.
     pub(crate) fn rollback_detail_popup_view(&self) -> Element<'_, Message> {
-        let Some(floors) = self.device_rollback_floors else {
+        let Some(floors) = self.device.rollback_floors else {
             return container(text("")).into();
         };
-        let slot = active_slot_suffix(Some(&self.device_slot));
+        let slot = active_slot_suffix(Some(&self.device.slot));
 
         let title = text(self.t("rollback_popup_title").to_string())
             .size(theme::text_size::WIZARD_STEP_TITLE)

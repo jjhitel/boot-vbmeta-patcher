@@ -45,15 +45,15 @@ impl App {
                 // Ignore a superseded lookup — a newer probe (re-entry, device
                 // swap, or a fresh manual serial) has taken over. Leaves the
                 // active probe's progress indicator untouched.
-                if self.flash_region_pending != Some(id) {
+                if self.queries.region_pending != Some(id) {
                     return Task::none();
                 }
-                self.flash_region_pending = None;
+                self.queries.region_pending = None;
                 match result {
                     Ok(info) => {
                         let region = region_from_salearea(&info);
                         if !serial.is_empty() {
-                            self.device_info_cache.insert(serial, info);
+                            self.queries.info_cache.insert(serial, info);
                         }
                         // Only touch the selection while still on the region
                         // step — never retroactively change a region the user
@@ -299,8 +299,8 @@ impl App {
                 let phases = self.begin_phased_op(View::Flash, OperationPhaseKind::Flash);
                 self.error_msg = None;
                 let cfg = self.wf_config.clone();
-                let conn = self.connection;
-                let device_model = self.device_model.clone();
+                let conn = self.device.connection;
+                let device_model = self.device.model.clone();
                 let fw_folder = self.flash.firmware_folder.clone().unwrap_or_default();
                 let loader_override = self.flash.loader_override.clone();
                 let firmware_identity = self.flash.firmware_identity.clone();

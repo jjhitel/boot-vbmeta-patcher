@@ -705,12 +705,12 @@ impl App {
 
     pub(crate) fn status_bar(&self) -> Element<'_, Message> {
         let p = self.pal();
-        let status_color = self.connection.color(&p);
+        let status_color = self.device.connection.color(&p);
         let status_label = self.t(self.connection_label_key());
-        let model_text = if self.device_model.is_empty() {
+        let model_text = if self.device.model.is_empty() {
             ""
         } else {
-            &self.device_model
+            &self.device.model
         };
         let mut status_row = row![
             text(format!("●  {status_label}"))

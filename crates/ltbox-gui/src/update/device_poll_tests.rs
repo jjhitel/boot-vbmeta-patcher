@@ -51,7 +51,7 @@ fn serial_swap_drops_snapshot_and_invalidates_transient_ui() {
     ));
     app.qfil_popup = Some(("A".to_string(), crate::QfilPopupState::Loading));
     app.rollback_popup_open = true;
-    app.flash_region_pending = Some(41);
+    app.queries.region_pending = Some(41);
 
     // A serial identifies B, but the rest of this poll is blank. B must not
     // inherit any identity or rollback data from A while the fields merge.
@@ -60,22 +60,22 @@ fn serial_swap_drops_snapshot_and_invalidates_transient_ui() {
         ConnectionStatus::Fastboot,
     )));
 
-    assert_eq!(app.connection, ConnectionStatus::Fastboot);
-    assert_eq!(app.device_serial, "B");
-    assert!(app.device_model.is_empty());
-    assert!(app.device_slot.is_empty());
-    assert!(app.device_firmware.is_empty());
-    assert!(app.device_firmware_full.is_empty());
-    assert!(app.device_arb.is_empty());
-    assert!(app.device_ram.is_empty());
-    assert!(app.device_storage.is_empty());
-    assert!(app.device_market_name.is_empty());
-    assert!(app.device_rollback_floors.is_none());
+    assert_eq!(app.device.connection, ConnectionStatus::Fastboot);
+    assert_eq!(app.device.serial, "B");
+    assert!(app.device.model.is_empty());
+    assert!(app.device.slot.is_empty());
+    assert!(app.device.firmware.is_empty());
+    assert!(app.device.firmware_full.is_empty());
+    assert!(app.device.arb.is_empty());
+    assert!(app.device.ram.is_empty());
+    assert!(app.device.storage.is_empty());
+    assert!(app.device.market_name.is_empty());
+    assert!(app.device.rollback_floors.is_none());
     assert!(app.device_info_popup.is_none());
     assert!(app.ota_popup.is_none());
     assert!(app.qfil_popup.is_none());
     assert!(!app.rollback_popup_open);
-    assert!(app.flash_region_pending.is_none());
+    assert!(app.queries.region_pending.is_none());
     // Results already in flight for A may finish after the swap.
     let _ = app.update(Message::DeviceInfoFetched(
         "A".into(),
@@ -99,23 +99,23 @@ fn same_serial_blank_poll_retains_identity_snapshot() {
         "A",
         ConnectionStatus::Fastboot,
     )));
-    let expected_floors = app.device_rollback_floors;
+    let expected_floors = app.device.rollback_floors;
 
     let _ = app.update(Message::DevicePolled(serial_only_poll(
         "A",
         ConnectionStatus::Fastboot,
     )));
 
-    assert_eq!(app.device_serial, "A");
-    assert_eq!(app.device_model, "model-A");
-    assert_eq!(app.device_slot, "_a");
-    assert_eq!(app.device_firmware, "firmware-A");
-    assert_eq!(app.device_firmware_full, "full-firmware-A");
-    assert_eq!(app.device_arb, "arb-A");
-    assert_eq!(app.device_ram, "ram-A");
-    assert_eq!(app.device_storage, "storage-A");
-    assert_eq!(app.device_market_name, "market-A");
-    assert_eq!(app.device_rollback_floors, expected_floors);
+    assert_eq!(app.device.serial, "A");
+    assert_eq!(app.device.model, "model-A");
+    assert_eq!(app.device.slot, "_a");
+    assert_eq!(app.device.firmware, "firmware-A");
+    assert_eq!(app.device.firmware_full, "full-firmware-A");
+    assert_eq!(app.device.arb, "arb-A");
+    assert_eq!(app.device.ram, "ram-A");
+    assert_eq!(app.device.storage, "storage-A");
+    assert_eq!(app.device.market_name, "market-A");
+    assert_eq!(app.device.rollback_floors, expected_floors);
 }
 
 #[test]
@@ -131,26 +131,26 @@ fn serialless_edl_preserves_identity_but_different_serial_resets_it() {
         ..DevicePollResult::default()
     }));
 
-    assert_eq!(app.device_serial, "A");
-    assert_eq!(app.device_model, "model-A");
-    assert_eq!(app.device_firmware, "firmware-A");
-    assert_eq!(app.device_ram, "ram-A");
-    assert_eq!(app.device_storage, "storage-A");
-    assert_eq!(app.device_market_name, "market-A");
-    assert!(app.device_rollback_floors.is_none());
+    assert_eq!(app.device.serial, "A");
+    assert_eq!(app.device.model, "model-A");
+    assert_eq!(app.device.firmware, "firmware-A");
+    assert_eq!(app.device.ram, "ram-A");
+    assert_eq!(app.device.storage, "storage-A");
+    assert_eq!(app.device.market_name, "market-A");
+    assert!(app.device.rollback_floors.is_none());
 
     let _ = app.update(Message::DevicePolled(serial_only_poll(
         "B",
         ConnectionStatus::Adb,
     )));
 
-    assert_eq!(app.device_serial, "B");
-    assert!(app.device_model.is_empty());
-    assert!(app.device_firmware.is_empty());
-    assert!(app.device_ram.is_empty());
-    assert!(app.device_storage.is_empty());
-    assert!(app.device_market_name.is_empty());
-    assert!(app.device_rollback_floors.is_none());
+    assert_eq!(app.device.serial, "B");
+    assert!(app.device.model.is_empty());
+    assert!(app.device.firmware.is_empty());
+    assert!(app.device.ram.is_empty());
+    assert!(app.device.storage.is_empty());
+    assert!(app.device.market_name.is_empty());
+    assert!(app.device.rollback_floors.is_none());
 }
 
 #[test]
@@ -165,26 +165,26 @@ fn disconnect_clears_snapshot_and_closes_transient_ui() {
     ));
     app.qfil_popup = Some(("A".to_string(), crate::QfilPopupState::Loading));
     app.rollback_popup_open = true;
-    app.flash_region_pending = Some(42);
+    app.queries.region_pending = Some(42);
 
     let _ = app.update(Message::DevicePolled(DevicePollResult::default()));
 
-    assert_eq!(app.connection, ConnectionStatus::None);
-    assert!(app.device_serial.is_empty());
-    assert!(app.device_model.is_empty());
-    assert!(app.device_slot.is_empty());
-    assert!(app.device_firmware.is_empty());
-    assert!(app.device_firmware_full.is_empty());
-    assert!(app.device_arb.is_empty());
-    assert!(app.device_ram.is_empty());
-    assert!(app.device_storage.is_empty());
-    assert!(app.device_market_name.is_empty());
-    assert!(app.device_rollback_floors.is_none());
+    assert_eq!(app.device.connection, ConnectionStatus::None);
+    assert!(app.device.serial.is_empty());
+    assert!(app.device.model.is_empty());
+    assert!(app.device.slot.is_empty());
+    assert!(app.device.firmware.is_empty());
+    assert!(app.device.firmware_full.is_empty());
+    assert!(app.device.arb.is_empty());
+    assert!(app.device.ram.is_empty());
+    assert!(app.device.storage.is_empty());
+    assert!(app.device.market_name.is_empty());
+    assert!(app.device.rollback_floors.is_none());
     assert!(app.device_info_popup.is_none());
     assert!(app.ota_popup.is_none());
     assert!(app.qfil_popup.is_none());
     assert!(!app.rollback_popup_open);
-    assert!(app.flash_region_pending.is_none());
+    assert!(app.queries.region_pending.is_none());
 }
 
 #[test]
@@ -200,16 +200,16 @@ fn unknown_snapshot_is_cleared_when_first_known_serial_arrives() {
         ConnectionStatus::Adb,
     )));
 
-    assert_eq!(app.device_serial, "A");
-    assert!(app.device_model.is_empty());
-    assert!(app.device_slot.is_empty());
-    assert!(app.device_firmware.is_empty());
-    assert!(app.device_firmware_full.is_empty());
-    assert!(app.device_arb.is_empty());
-    assert!(app.device_ram.is_empty());
-    assert!(app.device_storage.is_empty());
-    assert!(app.device_market_name.is_empty());
-    assert!(app.device_rollback_floors.is_none());
+    assert_eq!(app.device.serial, "A");
+    assert!(app.device.model.is_empty());
+    assert!(app.device.slot.is_empty());
+    assert!(app.device.firmware.is_empty());
+    assert!(app.device.firmware_full.is_empty());
+    assert!(app.device.arb.is_empty());
+    assert!(app.device.ram.is_empty());
+    assert!(app.device.storage.is_empty());
+    assert!(app.device.market_name.is_empty());
+    assert!(app.device.rollback_floors.is_none());
 }
 
 #[test]
@@ -226,11 +226,11 @@ fn new_serial_applies_its_available_fields_after_reset() {
         slot: "_b".into(),
         ..DevicePollResult::default()
     }));
-    assert_eq!(app.device_serial, "B");
-    assert_eq!(app.device_model, "model-B");
-    assert_eq!(app.device_slot, "_b");
-    assert!(app.device_firmware.is_empty());
-    assert!(app.device_rollback_floors.is_none());
+    assert_eq!(app.device.serial, "B");
+    assert_eq!(app.device.model, "model-B");
+    assert_eq!(app.device.slot, "_b");
+    assert!(app.device.firmware.is_empty());
+    assert!(app.device.rollback_floors.is_none());
 }
 
 #[test]
@@ -245,8 +245,8 @@ fn blank_serial_fastboot_poll_does_not_prove_a_device_swap() {
         "",
         ConnectionStatus::Fastboot,
     )));
-    assert_eq!(app.device_serial, "A");
-    assert_eq!(app.device_model, "model-A");
-    assert_eq!(app.device_rollback_floors, Some(rollback_floors()));
+    assert_eq!(app.device.serial, "A");
+    assert_eq!(app.device.model, "model-A");
+    assert_eq!(app.device.rollback_floors, Some(rollback_floors()));
     assert!(app.rollback_popup_open);
 }
