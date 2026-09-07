@@ -461,7 +461,6 @@ fn execute_flash<B: KonaBessFlashBackend>(
     prepared: &KonaBessPrepared,
     edit: KonaBessTableEdit<'_>,
     phases: &PhaseReporter,
-    ll: &LiveLabels,
     log: &mut Vec<String>,
 ) -> Result<(), String> {
     let output_dir = prepared.work_dir.join("rebuilt");
@@ -510,7 +509,12 @@ fn execute_flash<B: KonaBessFlashBackend>(
     // AVB-matched pair have completed in this same backend session.
     live!(log, "[KonaBess] {}", phases.marker(7));
     backend.reboot(log);
-    live!(log, "[KonaBess] {}", ll.flash_completed);
+    // Not the firmware label: this run wrote vendor_boot and vbmeta.
+    live!(
+        log,
+        "[KonaBess] {}",
+        ltbox_core::i18n::tr("live_image_flash_completed")
+    );
     Ok(())
 }
 
@@ -519,10 +523,9 @@ fn run_flash<B: KonaBessFlashBackend>(
     prepared: &KonaBessPrepared,
     edit: KonaBessTableEdit<'_>,
     phases: &PhaseReporter,
-    ll: &LiveLabels,
     log: &mut Vec<String>,
 ) -> Result<(), String> {
-    match execute_flash(backend, prepared, edit, phases, ll, log) {
+    match execute_flash(backend, prepared, edit, phases, log) {
         Ok(()) => Ok(()),
         Err(error) if backend.writes_started() => {
             // Never reset a device that may contain only one member of the
@@ -545,7 +548,6 @@ pub(crate) fn konabess_flash_worker(
     target_index: usize,
     chip: String,
     table: GpuTable,
-    ll: LiveLabels,
     phases: PhaseReporter,
 ) -> Result<Vec<String>, String> {
     let mut log = Vec::new();
@@ -579,7 +581,6 @@ pub(crate) fn konabess_flash_worker(
             gbl_verified,
         },
         &phases,
-        &ll,
         &mut log,
     )?;
     Ok(log)
@@ -804,19 +805,6 @@ mod tests {
         )
     }
 
-    fn live_labels() -> LiveLabels {
-        LiveLabels {
-            closing_dump: "closing".into(),
-            flash_completed: "completed".into(),
-            root_completed: "root completed".into(),
-            unroot_completed: "unroot completed".into(),
-            adb_no_kver: "no kernel version".into(),
-            backup_saved_prefix: "backup".into(),
-            root_resolved_prefix: "resolved".into(),
-            root_backup_copy_prefix: "backup copy".into(),
-        }
-    }
-
     fn prepared(root: &Path) -> KonaBessPrepared {
         let work_dir = root.join("work");
         KonaBessPrepared {
@@ -900,7 +888,6 @@ mod tests {
                 table: &table(),
             },
             &flash_phases(),
-            &live_labels(),
             &mut Vec::new(),
         );
         assert!(result.is_ok(), "{result:?}");
@@ -1003,7 +990,6 @@ mod tests {
                 table: &table(),
             },
             &flash_phases(),
-            &live_labels(),
             &mut Vec::new(),
         )
         .unwrap();
@@ -1046,7 +1032,6 @@ mod tests {
                 table: &table(),
             },
             &flash_phases(),
-            &live_labels(),
             &mut Vec::new(),
         )
         .unwrap_err();
@@ -1074,7 +1059,6 @@ mod tests {
                 table: &table(),
             },
             &flash_phases(),
-            &live_labels(),
             &mut Vec::new(),
         )
         .unwrap_err();

@@ -86,7 +86,6 @@ impl App {
                     "[Unroot] {}",
                     tr_args!("log_op_starting", what = self.t(unroot_type.label_key()))
                 ));
-                let ll = self.live_labels();
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
@@ -97,7 +96,6 @@ impl App {
                                     loader_override,
                                     device_model,
                                     conn,
-                                    ll,
                                     phases,
                                 )
                             })

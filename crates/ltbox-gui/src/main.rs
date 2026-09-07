@@ -1331,8 +1331,6 @@ fn parse_hwboardid_ram_storage(hwboardid: &str) -> (String, String) {
 pub(crate) struct LiveLabels {
     pub(crate) closing_dump: String,
     pub(crate) flash_completed: String,
-    pub(crate) root_completed: String,
-    pub(crate) unroot_completed: String,
     pub(crate) adb_no_kver: String,
     pub(crate) backup_saved_prefix: String,
     pub(crate) root_resolved_prefix: String,
@@ -2368,8 +2366,6 @@ impl App {
         LiveLabels {
             closing_dump: t("live_closing_dump_session"),
             flash_completed: t("live_flash_completed"),
-            root_completed: t("live_root_completed"),
-            unroot_completed: t("live_unroot_completed"),
             adb_no_kver: t("live_adb_no_kver"),
             backup_saved_prefix: t("live_backup_saved_prefix"),
             root_resolved_prefix: t("live_root_resolved_prefix"),

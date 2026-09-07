@@ -647,7 +647,11 @@ pub(crate) fn root_worker(
                     )
                 );
             }
-            live!(log, "[Root] {}", ll.root_completed);
+            live!(
+                log,
+                "[Root] {}",
+                ltbox_core::i18n::tr("live_image_flash_completed")
+            );
             Ok(())
         })();
     match device_phase_result {

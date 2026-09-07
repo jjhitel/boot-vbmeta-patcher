@@ -187,7 +187,6 @@ impl App {
                         self.konabess.next();
                         let phases =
                             self.begin_phased_op(View::KonaBess, OperationPhaseKind::KonaBess);
-                        let ll = self.live_labels();
                         return Task::perform(
                             async move {
                                 tokio::task::spawn_blocking(move || {
@@ -198,7 +197,6 @@ impl App {
                                             target_index,
                                             chip,
                                             table,
-                                            ll,
                                             phases,
                                         )
                                     })

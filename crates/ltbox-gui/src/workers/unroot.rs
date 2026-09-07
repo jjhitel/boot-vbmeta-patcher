@@ -3,7 +3,7 @@
 //! handler.
 
 use crate::{
-    ConnectionStatus, LiveLabels, PhaseReporter, UnrootType, find_edl_loader, open_edl_session,
+    ConnectionStatus, PhaseReporter, UnrootType, find_edl_loader, open_edl_session,
     root_skips_avb_postprocess, transition_to_edl,
 };
 use ltbox_core::{i18n::tr, live, tr_args};
@@ -18,7 +18,6 @@ pub(crate) fn unroot_worker(
     loader_override: Option<String>,
     device_model: String,
     conn: ConnectionStatus,
-    ll: LiveLabels,
     phases: PhaseReporter,
 ) -> Result<Vec<String>, String> {
     let mut log = Vec::new();
@@ -202,7 +201,11 @@ pub(crate) fn unroot_worker(
     session
         .reset(&mut log)
         .map_err(|e| tr_args!("err_reset_failed", error = e))?;
-    live!(log, "[Unroot] {}", ll.unroot_completed);
+    live!(
+        log,
+        "[Unroot] {}",
+        ltbox_core::i18n::tr("live_image_flash_completed")
+    );
     Ok(log)
 }
 
