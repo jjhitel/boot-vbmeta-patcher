@@ -217,9 +217,8 @@ impl OperationPhaseKind {
     }
 }
 
-/// Future Stage-D callbacks map into the stable inspect/patch/rebuild portion
+/// KonaBess build callbacks map into the stable inspect/patch/rebuild portion
 /// of the full EDL operation plan, matching the region worker's stage mapping.
-#[allow(dead_code)]
 pub(crate) const fn konabess_build_phase(stage: KonaBessBuildStage) -> usize {
     match stage {
         KonaBessBuildStage::Inspect => 3,
