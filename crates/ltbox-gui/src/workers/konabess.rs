@@ -2,8 +2,8 @@
 //! selection, then rebuild and flash the AVB-matched image pair.
 
 use crate::{
-    ConnectionStatus, KonaBessPrepared, LiveLabels, PhaseReporter, open_edl_session,
-    prepare_tb323fu_efisp, provision_tb323fu_efisp, transition_to_edl,
+    ConnectionStatus, KonaBessPrepared, LiveLabels, PhaseReporter, fingerprint_token_match,
+    open_edl_session, prepare_tb323fu_efisp, provision_tb323fu_efisp, transition_to_edl,
 };
 use ltbox_core::{live, tr_args};
 use ltbox_patch::konabess::{GpuTable, KonaBessAvbOutput, KonaBessBuildStage, VendorBootDtbInfo};
@@ -343,9 +343,7 @@ trait KonaBessFlashBackend {
         &mut self,
         firmware_dir: &Path,
         output_dir: &Path,
-        target_index: usize,
-        chip: &str,
-        table: &GpuTable,
+        edit: KonaBessTableEdit<'_>,
         on_stage: &mut dyn FnMut(KonaBessBuildStage),
     ) -> Result<KonaBessAvbOutput, String>;
     fn open_session(&mut self, log: &mut Vec<String>) -> Result<(), String>;
@@ -383,17 +381,16 @@ impl KonaBessFlashBackend for FlashDeviceBackend<'_> {
         &mut self,
         firmware_dir: &Path,
         output_dir: &Path,
-        target_index: usize,
-        chip: &str,
-        table: &GpuTable,
+        edit: KonaBessTableEdit<'_>,
         on_stage: &mut dyn FnMut(KonaBessBuildStage),
     ) -> Result<KonaBessAvbOutput, String> {
         ltbox_patch::konabess::build_konabess_avb_images_from_table_with_progress(
             firmware_dir,
             output_dir,
-            target_index,
-            chip,
-            table,
+            edit.target_index,
+            edit.chip,
+            edit.table,
+            edit.gbl_verified,
             on_stage,
         )
         .map_err(|error| error.to_string())
@@ -453,6 +450,10 @@ struct KonaBessTableEdit<'a> {
     target_index: usize,
     chip: &'a str,
     table: &'a GpuTable,
+    /// Boot chain verified by the GBL EFI on `efisp` rather than by AVB, read
+    /// from the dumped image the way the root pipeline reads it. The AVB
+    /// rebuild is skipped, so a Lenovo-key vbmeta no longer stops the run.
+    gbl_verified: bool,
 }
 
 fn execute_flash<B: KonaBessFlashBackend>(
@@ -464,20 +465,13 @@ fn execute_flash<B: KonaBessFlashBackend>(
     log: &mut Vec<String>,
 ) -> Result<(), String> {
     let output_dir = prepared.work_dir.join("rebuilt");
-    let output = backend.build_pair(
-        &prepared.work_dir,
-        &output_dir,
-        edit.target_index,
-        edit.chip,
-        edit.table,
-        &mut |stage| {
-            live!(
-                log,
-                "[KonaBess] {}",
-                phases.marker(crate::konabess_build_phase(stage))
-            );
-        },
-    )?;
+    let output = backend.build_pair(&prepared.work_dir, &output_dir, edit, &mut |stage| {
+        live!(
+            log,
+            "[KonaBess] {}",
+            phases.marker(crate::konabess_build_phase(stage))
+        );
+    })?;
 
     let vendor_boot_partition = format!("vendor_boot{}", prepared.slot_suffix);
     let vbmeta_partition = format!("vbmeta{}", prepared.slot_suffix);
@@ -505,8 +499,12 @@ fn execute_flash<B: KonaBessFlashBackend>(
         vendor_boot_lun,
         log,
     )?;
-    phases.mark_writes_started();
-    backend.flash_partition(&vbmeta_partition, &output.vbmeta, vbmeta_lun, log)?;
+    // Absent on a GBL-verified device: the AVB chain was never rebuilt, so
+    // there is nothing to pair with the vendor_boot write.
+    if let Some(vbmeta) = output.vbmeta.as_deref() {
+        phases.mark_writes_started();
+        backend.flash_partition(&vbmeta_partition, vbmeta, vbmeta_lun, log)?;
+    }
 
     // The reset is deliberately unreachable until both members of the
     // AVB-matched pair have completed in this same backend session.
@@ -551,19 +549,21 @@ pub(crate) fn konabess_flash_worker(
     phases: PhaseReporter,
 ) -> Result<Vec<String>, String> {
     let mut log = Vec::new();
-    let prepared_xiaoxin = ltbox_patch::avb::extract_image_avb_info(&prepared.vendor_boot)
+    let prepared_fingerprint = ltbox_patch::avb::extract_image_avb_info(&prepared.vendor_boot)
         .ok()
-        .and_then(|info| ltbox_patch::avb::build_fingerprint(&info))
-        .is_some_and(|fingerprint| {
-            // Bidirectional SKU equivalence makes the TB376FC token match TB390FU too.
-            ltbox_core::model::fingerprint_model_match(
-                &fingerprint,
-                ltbox_core::model::TB376FC_MODEL,
-            )
-        });
+        .and_then(|info| ltbox_patch::avb::build_fingerprint(&info));
+    // Bidirectional SKU equivalence makes the TB376FC token match TB390FU too.
+    let prepared_xiaoxin = prepared_fingerprint.as_deref().is_some_and(|fingerprint| {
+        ltbox_core::model::fingerprint_model_match(fingerprint, ltbox_core::model::TB376FC_MODEL)
+    });
     if prepared_xiaoxin {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
+    // Read from the dumped image, not the connection: EDL reports no model, and
+    // this decides whether the AVB chain is rebuilt at all.
+    let gbl_verified = prepared_fingerprint
+        .as_deref()
+        .is_some_and(|fingerprint| fingerprint_token_match(fingerprint, "TB323FU"));
     let mut backend = FlashDeviceBackend {
         loader: &loader,
         session: None,
@@ -576,6 +576,7 @@ pub(crate) fn konabess_flash_worker(
             target_index,
             chip: &chip,
             table: &table,
+            gbl_verified,
         },
         &phases,
         &ll,
@@ -700,11 +701,14 @@ mod tests {
             &mut self,
             firmware_dir: &Path,
             output_dir: &Path,
-            target_index: usize,
-            _chip: &str,
-            _table: &GpuTable,
+            edit: KonaBessTableEdit<'_>,
             on_stage: &mut dyn FnMut(KonaBessBuildStage),
         ) -> Result<KonaBessAvbOutput, String> {
+            let KonaBessTableEdit {
+                target_index,
+                gbl_verified,
+                ..
+            } = edit;
             self.events.push(format!("build:{target_index}"));
             if let Some(error) = self.build_error.take() {
                 return Err(error);
@@ -715,7 +719,7 @@ mod tests {
             on_stage(KonaBessBuildStage::RebuildVbmeta);
             Ok(KonaBessAvbOutput {
                 vendor_boot: output_dir.join("vendor_boot.img"),
-                vbmeta: output_dir.join("vbmeta.img"),
+                vbmeta: (!gbl_verified).then(|| output_dir.join("vbmeta.img")),
                 target_index,
             })
         }
@@ -880,6 +884,42 @@ mod tests {
     }
 
     #[test]
+    fn a_gbl_verified_device_flashes_vendor_boot_without_a_vbmeta_pair() {
+        // TB323FU verifies through the GBL on `efisp`, so nothing rebuilds the
+        // AVB chain — the vbmeta whose Lenovo key cannot be re-signed is never
+        // produced, and never flashed.
+        let root = tempfile::tempdir().unwrap();
+        let mut backend = FakeFlashBackend::default();
+        let result = execute_flash(
+            &mut backend,
+            &prepared(root.path()),
+            KonaBessTableEdit {
+                gbl_verified: true,
+                target_index: 3,
+                chip: "waipio",
+                table: &table(),
+            },
+            &flash_phases(),
+            &live_labels(),
+            &mut Vec::new(),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert!(
+            backend
+                .events
+                .iter()
+                .any(|e| e.starts_with("flash:vendor_boot")),
+            "{:?}",
+            backend.events
+        );
+        assert!(
+            !backend.events.iter().any(|e| e.starts_with("flash:vbmeta")),
+            "{:?}",
+            backend.events
+        );
+    }
+
+    #[test]
     fn gate_abort_never_creates_backup_or_classifies() {
         let root = tempfile::tempdir().unwrap();
         let paths = test_paths(root.path());
@@ -957,6 +997,7 @@ mod tests {
             &mut backend,
             &prepared(root.path()),
             KonaBessTableEdit {
+                gbl_verified: false,
                 target_index: 9,
                 chip: "waipio",
                 table: &table(),
@@ -999,6 +1040,7 @@ mod tests {
             &mut backend,
             &prepared(root.path()),
             KonaBessTableEdit {
+                gbl_verified: false,
                 target_index: 3,
                 chip: "waipio",
                 table: &table(),
@@ -1026,6 +1068,7 @@ mod tests {
             &mut backend,
             &prepared(root.path()),
             KonaBessTableEdit {
+                gbl_verified: false,
                 target_index: 5,
                 chip: "waipio",
                 table: &table(),

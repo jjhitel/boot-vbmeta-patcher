@@ -517,6 +517,7 @@ mod tests {
             output_dir,
             0,
             export,
+            false,
             &mut |stage| stages.push(stage),
         )
         .unwrap();
@@ -547,7 +548,7 @@ mod tests {
         assert!(vendor_info.footer.is_some());
         assert_eq!(
             hash_descriptor(&output.vendor_boot),
-            hash_descriptor(&output.vbmeta)
+            hash_descriptor(output.vbmeta.as_ref().expect("vbmeta rebuilt"))
         );
         verify_image(
             &output.vendor_boot,
@@ -560,7 +561,7 @@ mod tests {
         )
         .unwrap();
         verify_image(
-            &output.vbmeta,
+            output.vbmeta.as_ref().expect("vbmeta rebuilt"),
             &VerifyImageOptions {
                 key_blob: Some(avbtool_rs::crypto::extract_public_key(KNOWN_VBMETA_KEY).unwrap()),
                 expected_chain_partitions: Vec::new(),
@@ -594,6 +595,7 @@ mod tests {
             output_dir,
             target_index,
             export,
+            false,
             &mut |_| {},
         )
         .unwrap_err();

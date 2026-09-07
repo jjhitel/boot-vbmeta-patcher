@@ -41,7 +41,9 @@ pub use vendor_boot::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KonaBessAvbOutput {
     pub vendor_boot: PathBuf,
-    pub vbmeta: PathBuf,
+    /// `None` when the device verifies through the GBL on `efisp`: nothing
+    /// rebuilds the AVB chain there, so there is no vbmeta to flash.
+    pub vbmeta: Option<PathBuf>,
     pub target_index: usize,
 }
 
@@ -127,6 +129,7 @@ pub fn build_konabess_avb_images_with_progress(
         output_dir,
         target_index,
         &export,
+        false,
         &mut on_stage,
     )
 }
@@ -138,6 +141,7 @@ pub fn build_konabess_avb_images_from_table_with_progress(
     target_index: usize,
     chip: &str,
     table: &GpuTable,
+    gbl_verified: bool,
     mut on_stage: impl FnMut(KonaBessBuildStage),
 ) -> Result<KonaBessAvbOutput> {
     let vendor_boot_src = firmware_dir.join("vendor_boot.img");
@@ -157,16 +161,23 @@ pub fn build_konabess_avb_images_from_table_with_progress(
         output_dir,
         target_index,
         &export,
+        gbl_verified,
         &mut on_stage,
     )
 }
 
+/// `gbl_verified` marks a device whose boot chain is verified by the GBL EFI on
+/// `efisp` instead of by AVB. The root pipeline already leaves the chain alone
+/// there, and the same applies here: it is what lets a Lenovo-key vbmeta
+/// through, since that key cannot be re-signed and nothing on these devices
+/// needs it to be.
 fn build_konabess_avb_images_from_export(
     vendor_boot_src: &Path,
     vbmeta_src: &Path,
     output_dir: &Path,
     target_index: usize,
     export: &KonaBessExport,
+    gbl_verified: bool,
     on_stage: &mut impl FnMut(KonaBessBuildStage),
 ) -> Result<KonaBessAvbOutput> {
     let vendor_boot_info = avb::extract_image_avb_info(vendor_boot_src)?;
@@ -191,13 +202,19 @@ fn build_konabess_avb_images_from_export(
         ))
     })?;
 
-    let vbmeta_info = avb::extract_image_avb_info(vbmeta_src)?;
     // Resolve the vbmeta key before patching or touching the output directory.
     // A present-but-unknown key must never leave a tempting unsigned artifact.
-    let vbmeta_key = key_map::key_spec_for_signed_pubkey(vbmeta_info.public_key_sha1.as_deref())
-        .map_err(|key| {
-            LtboxError::Avb(key_map::unresolved_signing_key_error("vbmeta.img", &key))
-        })?;
+    // Skipped when the GBL verifies the device: no vbmeta is produced, so
+    // demanding a usable signing key would turn away a device that needs none.
+    let vbmeta_rebuild = if gbl_verified {
+        None
+    } else {
+        let info = avb::extract_image_avb_info(vbmeta_src)?;
+        let key = key_map::key_spec_for_signed_pubkey(info.public_key_sha1.as_deref()).map_err(
+            |key| LtboxError::Avb(key_map::unresolved_signing_key_error("vbmeta.img", &key)),
+        )?;
+        Some((info, key))
+    };
 
     let mut patchable = fs::read(vendor_boot_src).map_err(|e| {
         error(format!(
@@ -269,30 +286,43 @@ fn build_konabess_avb_images_from_export(
             vendor_boot_out.display()
         ))
     })?;
-    avb::add_hash_footer(&vendor_boot_out, &vendor_boot_info, None, None)?;
+    // A GBL-verified device takes the repacked image as-is, the same way the
+    // root pipeline flashes its repacked boot image without re-adding a footer.
+    if !gbl_verified {
+        avb::add_hash_footer(&vendor_boot_out, &vendor_boot_info, None, None)?;
+    }
     info!(
         "Applied KonaBess export to DTB {target_index} and rebuilt {}",
         vendor_boot_out.display()
     );
 
     on_stage(KonaBessBuildStage::RebuildVbmeta);
-    let vbmeta_out = output_dir.join("vbmeta.img");
-    match vbmeta_key {
-        Some(key_spec) => {
-            avb::rebuild_vbmeta_with_partition_descriptors(
-                &vbmeta_out,
-                vbmeta_src,
-                &[vendor_boot_out.as_path()],
-                key_spec,
-                Some(&vbmeta_info.algorithm),
-            )?;
-            info!("Refreshed vbmeta descriptors: {}", vbmeta_out.display());
-        }
+    let vbmeta_out = match vbmeta_rebuild {
         None => {
-            fs::copy(vbmeta_src, &vbmeta_out)?;
-            info!("vbmeta is unsigned; copied stock blob");
+            info!("GBL verifies this device; leaving the AVB chain untouched");
+            None
         }
-    }
+        Some((vbmeta_info, key)) => {
+            let out = output_dir.join("vbmeta.img");
+            match key {
+                Some(key_spec) => {
+                    avb::rebuild_vbmeta_with_partition_descriptors(
+                        &out,
+                        vbmeta_src,
+                        &[vendor_boot_out.as_path()],
+                        key_spec,
+                        Some(&vbmeta_info.algorithm),
+                    )?;
+                    info!("Refreshed vbmeta descriptors: {}", out.display());
+                }
+                None => {
+                    fs::copy(vbmeta_src, &out)?;
+                    info!("vbmeta is unsigned; copied stock blob");
+                }
+            }
+            Some(out)
+        }
+    };
 
     Ok(KonaBessAvbOutput {
         vendor_boot: vendor_boot_out,
