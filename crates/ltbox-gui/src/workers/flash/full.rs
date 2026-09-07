@@ -1794,18 +1794,6 @@ mod tests {
     }
 
     #[test]
-    fn sha256_hex_file_matches_known_digest() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("abc.bin");
-        std::fs::write(&path, b"abc").expect("write");
-        // FIPS 180-2 SHA-256("abc")
-        assert_eq!(
-            crate::arb_overlay::sha256_hex_file(&path).expect("hash"),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
-    }
-
-    #[test]
     fn verify_rejects_unknown_name_and_hash_mismatch() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("generic_superfastboot_prc.efi");

@@ -214,27 +214,6 @@ pub(crate) fn efisp_expected_sha256(asset_name: &str) -> Option<&'static str> {
         .map(|(_, hash)| *hash)
 }
 
-pub(crate) fn sha256_hex_file(path: &std::path::Path) -> Result<String, String> {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-
-    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
-}
-
 /// Verify a downloaded efisp EFI against the pinned name → SHA-256 map.
 /// Unknown names and hash mismatches both refuse.
 pub(crate) fn verify_efisp_asset(path: &std::path::Path, asset_name: &str) -> Result<(), String> {
@@ -245,7 +224,7 @@ pub(crate) fn verify_efisp_asset(path: &std::path::Path, asset_name: &str) -> Re
             tag = EFISP_GBL_RELEASE_TAG
         )
     })?;
-    let actual = sha256_hex_file(path)?;
+    let actual = crate::file_hash::sha256_hex_file(path).map_err(|error| error.to_string())?;
     if actual != expected {
         return Err(tr_args!(
             "err_efisp_hash_mismatch",

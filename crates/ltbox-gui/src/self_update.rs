@@ -5,11 +5,11 @@
 //! validated. Only then is a same-filesystem replacement prepared beside the
 //! installed program and passed to the small, injected swap state machine.
 
-use sha2::{Digest, Sha256};
+use crate::file_hash::sha256_hex_file;
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -127,26 +127,6 @@ fn parse_sha256_sidecar(contents: &str) -> Result<String, &'static str> {
         return Err("checksum file does not start with a SHA-256 digest");
     }
     Ok(hash.to_ascii_lowercase())
-}
-
-fn sha256_hex_file(path: &Path) -> io::Result<String> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    let digest = hasher.finalize();
-    let mut hex = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        use std::fmt::Write as _;
-        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    Ok(hex)
 }
 
 fn safe_archive_path(path: &Path) -> bool {

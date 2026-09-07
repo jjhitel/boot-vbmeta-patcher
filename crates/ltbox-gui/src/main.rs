@@ -23,6 +23,7 @@ mod demo;
 mod device_name;
 mod device_queries;
 mod device_snapshot;
+mod file_hash;
 mod layout_constraints;
 mod loader;
 mod message;
