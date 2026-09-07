@@ -44,7 +44,12 @@ impl App {
         .into()
     }
 
-    #[cfg(windows)]
+    /// Not gated on Windows even though the process it reports is. The confirm
+    /// dialog behind it never was, so gating only the banner left
+    /// `ForceCloseSoftwareFix` without a constructor off Windows, which
+    /// `-D dead-code` rejects. Nothing here acts on its own: `poll_software_fix`
+    /// and `can_close_software_fix` hold the runtime `cfg!(windows)` guards, so
+    /// elsewhere `running` is only ever set by the demo scene.
     fn software_fix_banner(&self) -> Element<'_, Message> {
         let d = self.density();
         let label = if self.software_fix.closing {
@@ -147,7 +152,6 @@ impl App {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        #[cfg(windows)]
         if self.software_fix.running {
             content = content.push(self.software_fix_banner());
         }
