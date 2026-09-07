@@ -692,7 +692,7 @@ impl EdlSession {
         dev.reset_on_drop = false;
 
         ltbox_core::live!(log, "[EDL] {}", tr("log_edl_firehose_configuring"));
-        qdl::firehose_read(&mut dev, qdl::parsers::firehose_parser_ack_nak)
+        qdl::firehose_read_greeting(&mut dev)
             .map_err(|e| EdlError::Session(format!("Firehose read failed: {e}")))?;
         qdl::firehose_configure(&mut dev, false)
             .map_err(|e| EdlError::Session(format!("Firehose configure failed: {e}")))?;

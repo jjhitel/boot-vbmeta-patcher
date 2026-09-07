@@ -201,28 +201,64 @@ fn firehose_xml_setup(op: &str, kvps: &[(&str, &str)]) -> anyhow::Result<Vec<u8>
     Ok(buf)
 }
 
-/// Main Firehose XML reading function
+/// Read a complete Firehose response. Logs and partial XML are not an ACK.
 pub fn firehose_read<T: QdlChan>(
     channel: &mut T,
     response_parser: fn(&mut T, &IndexMap<String, String>) -> Result<FirehoseStatus, anyhow::Error>,
 ) -> Result<FirehoseStatus, anyhow::Error> {
-    let mut got_any_data = false;
+    firehose_read_response(channel, response_parser, false)
+}
+
+/// Drain the loader's startup greeting before sending configure. Some loaders
+/// end complete greeting logs with a timeout instead of an explicit ACK.
+/// Never use this relaxed termination rule for a command response.
+pub fn firehose_read_greeting<T: QdlChan>(channel: &mut T) -> anyhow::Result<FirehoseStatus> {
+    firehose_read_response(channel, firehose_parser_ack_nak, true)
+}
+
+fn firehose_read_response<T: QdlChan>(
+    channel: &mut T,
+    response_parser: fn(&mut T, &IndexMap<String, String>) -> Result<FirehoseStatus, anyhow::Error>,
+    greeting: bool,
+) -> Result<FirehoseStatus, anyhow::Error> {
+    let mut received_log = false;
     let mut pending: Vec<u8> = Vec::new();
+    let usb = channel.fh_config().backend == QdlBackend::Usb;
+    let mut empty_packet = false;
 
     loop {
         // Use BufRead to peek at available data
         let available = match channel.fill_buf() {
             Ok(buf) => buf,
             Err(e) => match e.kind() {
-                // In some cases (like with welcome messages), there's no acking
-                // and a timeout is the "end of data" marker instead..
-                std::io::ErrorKind::TimedOut if got_any_data => return Ok(FirehoseStatus::Ack),
-                std::io::ErrorKind::TimedOut => return Err(e.into()),
+                std::io::ErrorKind::Interrupted => continue,
+                std::io::ErrorKind::TimedOut
+                    if greeting
+                        && received_log
+                        && pending
+                            .iter()
+                            .all(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n')) =>
+                {
+                    return Ok(FirehoseStatus::Ack);
+                }
                 _ => return Err(e.into()),
             },
         };
 
-        got_any_data = true;
+        if available.is_empty() {
+            // USB can deliver a transfer-terminating ZLP between packets.
+            // Consecutive empty packets cannot supply a response; do not spin.
+            if usb && !empty_packet {
+                empty_packet = true;
+                continue;
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Firehose response ended before a complete reply",
+            )
+            .into());
+        }
+        empty_packet = false;
 
         // When channel is a non-packetized BufRead (e.g. serial) XML documents
         // are not separated from each other, or from rawmode data. Search for
@@ -271,9 +307,11 @@ pub fn firehose_read<T: QdlChan>(
             if let Some(XMLNode::Element(e)) = xml.children.first() {
                 // Check for a 'log' node and print out the message
                 if e.name == "log" {
+                    received_log = true;
                     // The last message within the initial logspam should be this
                     // Try to match on it to not pay the USB xfer timeout penalty each time
-                    if let Some(val) = e.attributes.get_key_value("value")
+                    if greeting
+                        && let Some(val) = e.attributes.get_key_value("value")
                         && val.1.starts_with("INFO: End of supported functions")
                     {
                         return Ok(FirehoseStatus::Ack);
@@ -303,7 +341,7 @@ pub fn firehose_read<T: QdlChan>(
                 // TODO: Use std::intrinsics::unlikely after it exits nightly
                 if e.attributes.get("AttemptRetry").is_some() {
                     // Restart the outer loop instead of recursing to avoid stack overflow
-                    got_any_data = false;
+                    received_log = false;
                     continue;
                 } else if e.attributes.get("AttemptRestart").is_some() {
                     // TODO: handle this automagically
@@ -764,12 +802,20 @@ pub fn firehose_read_storage(
         let chunk_size_bytes = min(bytes_left, channel.fh_config().recv_buffer_size);
         let mut buf = vec![0; chunk_size_bytes];
 
-        let n = channel.read(&mut buf).context("Error receiving data")?;
+        let n = match channel.read(&mut buf) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result.context("Error receiving data")?,
+        };
         if n == 0 {
-            // TODO: need more robustness here
-            /* Every 2 or 3 packets should be empty? */
-            last_read_was_zero_len = true;
-            continue;
+            if channel.fh_config().backend == QdlBackend::Usb && !last_read_was_zero_len {
+                last_read_was_zero_len = true;
+                continue;
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Firehose storage read ended before all data arrived",
+            )
+            .into());
         }
 
         last_read_was_zero_len = false;
