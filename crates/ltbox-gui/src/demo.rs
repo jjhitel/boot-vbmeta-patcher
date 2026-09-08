@@ -6,12 +6,16 @@
 //! `country`, `folder`, `confirm`, or `flash`. It also accepts first-screen view scenes
 //! `view:root`, `view:unroot`, `view:sysupdate`, `view:konabess`,
 //! `view:reboot`, `view:advanced`, `view:settings`, and `view:about`, plus the
-//! static inspection scenes enumerated in [`VALID_SCENES`].
+//! static inspection scenes enumerated in [`VALID_SCENES`], including the
+//! Advanced partition-table scenes `view:flash-parts` and `view:dump-parts`.
 
 use crate::*;
 
 const FIRMWARE_FOLDER: &str =
     "/Users/ltbox/Firmware/TB520FU_ROW_OPEN_USER_Q00002.0_W_ZUI_17.5.10.096_ST_251127";
+
+const LOADER_PATH: &str = "/Users/ltbox/Firmware/prog_firehose_ddr.elf";
+const DUMP_OUTPUT_DIR: &str = "/Users/ltbox/Dumps/TB520FU_2026-09-08";
 
 pub(crate) const VALID_SCENES: &[&str] = &[
     "dashboard",
@@ -53,6 +57,8 @@ pub(crate) const VALID_SCENES: &[&str] = &[
     "view:sysupdate-rescue-loader",
     "view:sysupdate-rescue-region",
     "view:sysupdate-rescue-confirm",
+    "view:flash-parts",
+    "view:dump-parts",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +73,13 @@ pub(crate) enum Scene {
     Root(RootScene),
     AdvancedRegionTarget,
     SysUpdateRescue(SysUpdateRescueScene),
+    PartitionTable(PartitionTableScene),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PartitionTableScene {
+    Flash,
+    Dump,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +152,8 @@ impl Scene {
             "view:sysupdate-rescue-confirm" => {
                 Some(Self::SysUpdateRescue(SysUpdateRescueScene::Confirm))
             }
+            "view:flash-parts" => Some(Self::PartitionTable(PartitionTableScene::Flash)),
+            "view:dump-parts" => Some(Self::PartitionTable(PartitionTableScene::Dump)),
             _ => {
                 let (flow, step) = value.split_once(':')?;
                 let flow = match flow {
@@ -190,7 +205,8 @@ impl Scene {
             | Self::View(_)
             | Self::Root(_)
             | Self::AdvancedRegionTarget
-            | Self::SysUpdateRescue(_) => {}
+            | Self::SysUpdateRescue(_)
+            | Self::PartitionTable(_) => {}
         }
 
         DevicePollResult {
@@ -229,9 +245,9 @@ pub(crate) fn initialize(app: &mut App) {
     });
     app.online = Some(true);
     app.software_fix.running = scene == Scene::SoftwareFix;
-    if scene == Scene::SoftwareFix {
-        app.startup_disclaimer_open = false;
-    }
+    // Screenshot scenes should open on the screen they name, not behind the
+    // launch disclaimer.
+    app.startup_disclaimer_open = false;
 
     if scene == Scene::DualUsbAdvisory {
         apply_dual_usb_advisory_scene(app);
@@ -246,6 +262,7 @@ pub(crate) fn initialize(app: &mut App) {
         Scene::Root(root_scene) => apply_root_scene(app, root_scene),
         Scene::AdvancedRegionTarget => apply_advanced_region_target_scene(app),
         Scene::SysUpdateRescue(rescue_scene) => apply_sysupdate_rescue_scene(app, rescue_scene),
+        Scene::PartitionTable(table) => apply_partition_table_scene(app, table),
         Scene::SoftwareFix
         | Scene::DualUsbAdvisory
         | Scene::Dashboard
@@ -348,6 +365,97 @@ fn apply_sysupdate_rescue_scene(app: &mut App, scene: SysUpdateRescueScene) {
         rescue_region_popup_open: scene == SysUpdateRescueScene::RegionPopup,
         rescue_region_confirmed: scene == SysUpdateRescueScene::Confirm,
     };
+}
+
+/// A representative UFS partition layout, so the table steps render with the
+/// row count and label lengths a real device produces.
+const DEMO_PARTITIONS: &[(u8, &str, u64, u64)] = &[
+    (0, "xbl_a", 6144, 8192),
+    (0, "xbl_config_a", 14336, 256),
+    (0, "aop_a", 14592, 4096),
+    (0, "tz_a", 18688, 8192),
+    (0, "hyp_a", 26880, 4096),
+    (0, "abl_a", 30976, 1024),
+    (0, "keymaster_a", 32000, 512),
+    (0, "cmnlib_a", 32512, 1024),
+    (0, "devcfg_a", 33536, 256),
+    (0, "featenabler_a", 33792, 256),
+    (1, "boot_a", 0, 262144),
+    (1, "init_boot_a", 262144, 16384),
+    (1, "vendor_boot_a", 278528, 131072),
+    (1, "dtbo_a", 409600, 49152),
+    (1, "vbmeta_a", 458752, 128),
+    (1, "vbmeta_system_a", 458880, 128),
+    (2, "super", 0, 16777216),
+    (2, "userdata", 16777216, 471859200),
+    (3, "persist", 0, 65536),
+    (3, "modemst1", 65536, 4096),
+    (3, "modemst2", 69632, 4096),
+    (3, "fsg", 73728, 4096),
+    (4, "metadata", 0, 32768),
+    (4, "misc", 32768, 2048),
+];
+
+const SECTOR: u64 = 4096;
+
+fn apply_partition_table_scene(app: &mut App, table: PartitionTableScene) {
+    app.current_view = View::Advanced;
+    match table {
+        PartitionTableScene::Flash => {
+            app.advanced_wizard_open = AdvancedWizardOpen::FlashParts;
+            app.flash_parts = FlashPartsWizard {
+                step: 1,
+                loader_path: Some(LOADER_PATH.to_string()),
+                entry_connection: Some(ConnectionStatus::Edl),
+                rows: DEMO_PARTITIONS
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &(lun, label, start, sectors))| FlashPartRow {
+                        lun,
+                        label: label.to_string(),
+                        start_sector: start,
+                        num_sectors: sectors,
+                        size_bytes: sectors * SECTOR,
+                        // Two picked images and one erase, so the table shows
+                        // every row state at once.
+                        file_path: match i {
+                            10 => Some(format!("{FIRMWARE_FOLDER}/boot.img")),
+                            12 => Some(format!("{FIRMWARE_FOLDER}/vendor_boot.img")),
+                            _ => None,
+                        },
+                        state: match i {
+                            10 | 12 => FlashRowState::Flash,
+                            23 => FlashRowState::Erase,
+                            _ => FlashRowState::Unchecked,
+                        },
+                    })
+                    .collect(),
+                ..FlashPartsWizard::default()
+            };
+        }
+        PartitionTableScene::Dump => {
+            app.advanced_wizard_open = AdvancedWizardOpen::DumpParts;
+            app.dump_parts = DumpPartsWizard {
+                step: 1,
+                loader_path: Some(LOADER_PATH.to_string()),
+                entry_connection: Some(ConnectionStatus::Edl),
+                output_dir: Some(DUMP_OUTPUT_DIR.to_string()),
+                rows: DEMO_PARTITIONS
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &(lun, label, start, sectors))| DumpPartRow {
+                        lun,
+                        label: label.to_string(),
+                        start_sector: start,
+                        num_sectors: sectors,
+                        size_bytes: sectors * SECTOR,
+                        selected: matches!(i, 10 | 11 | 18),
+                    })
+                    .collect(),
+                ..DumpPartsWizard::default()
+            };
+        }
+    }
 }
 
 fn apply_wizard_scene(app: &mut App, flow: Flow, step: WizardStep) {
