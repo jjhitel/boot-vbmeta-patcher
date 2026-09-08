@@ -40,8 +40,11 @@ pub(crate) fn effective_rollback_mode(
     use ltbox_patch::rollback::RollbackMode;
     match (policy, mode) {
         (RollbackPolicy::ReadOnly, _) => RollbackMode::Auto,
+        // A blind On would bump even matching indices and force the testkey
+        // chain with no downgrade in play, so it becomes Auto. Manual carries
+        // explicit targets and stays: the worker signs the chain and provisions
+        // the `_arb` GBL for it.
         (RollbackPolicy::Gbl, RollbackMode::On) => RollbackMode::Auto,
-        (RollbackPolicy::Gbl, RollbackMode::Manual) => RollbackMode::Off,
         _ => mode,
     }
 }

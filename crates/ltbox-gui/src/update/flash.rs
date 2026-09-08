@@ -556,10 +556,7 @@ mod tests {
     #[test]
     fn flash_rejects_disallowed_direct_rollback_selections() {
         for (model, rejected) in [
-            (
-                "TB323FU",
-                vec![RollbackSetting::On, RollbackSetting::Manual],
-            ),
+            ("TB323FU", vec![RollbackSetting::On]),
             (
                 "TB376FC",
                 vec![
@@ -595,7 +592,7 @@ mod tests {
 
     #[test]
     fn manual_confirmation_rechecks_changed_device_policy() {
-        for model in ["TB323FU", "TB376FC", "TB390FU"] {
+        for model in ["TB376FC", "TB390FU"] {
             let mut app = App::default();
             app.device.model = "TB320FC".into();
             app.flash.firmware_rollback_indices = Some((Ok(1), Ok(1)));
@@ -621,6 +618,15 @@ mod tests {
             let _task = app.update_flash(FlashMsg::FlashConfirmSetRollback(setting));
             assert_eq!(app.wf_config.modify_rollback, setting);
         }
+        app.flash.firmware_rollback_indices = Some((Ok(1), Ok(1)));
+        let _task = app.update_flash(FlashMsg::FlashConfirmSetRollback(RollbackSetting::Manual));
+        assert!(app.manual_rollback_buffers.is_some());
+    }
+
+    #[test]
+    fn flash_manual_rollback_opens_the_editor_on_tb323fu() {
+        let mut app = App::default();
+        app.device.model = "TB323FU".to_string();
         app.flash.firmware_rollback_indices = Some((Ok(1), Ok(1)));
         let _task = app.update_flash(FlashMsg::FlashConfirmSetRollback(RollbackSetting::Manual));
         assert!(app.manual_rollback_buffers.is_some());
