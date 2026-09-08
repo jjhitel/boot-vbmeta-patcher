@@ -78,6 +78,7 @@ pub(crate) fn simple_flash_worker(
             patch = patch_xmls.len().to_string()
         )
     );
+    phases.mark_writes_started();
     session
         .flash_rawprogram_verbatim(&raw_xmls, &patch_xmls, &mut log)
         .map_err(|e| tr_args!("err_flash_firmware_failed", error = e.to_string()))?;
@@ -86,6 +87,7 @@ pub(crate) fn simple_flash_worker(
     //    same as the stock script / full flash so the device boots the
     //    freshly-written slot on the next reset.
     live!(log, "[SimpleFlash] {}", phases.marker(4));
+    phases.mark_writes_started();
     if let Err(e) = session.set_active_slot_a(&mut log) {
         return Err(tr_args!(
             "err_flash_set_bootable_lun_failed",

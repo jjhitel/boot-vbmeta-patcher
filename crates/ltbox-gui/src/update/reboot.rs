@@ -7,13 +7,13 @@ impl App {
     pub(crate) fn update_reboot(&mut self, msg: RebootMsg) -> Task<Message> {
         match msg {
             RebootMsg::RebootRequest(target) => {
-                if self.busy {
+                if self.operation.is_running() {
                     return Task::none();
                 }
-                if !target.available_from(self.connection) {
+                if !target.available_from(self.device.connection) {
                     self.error_msg = Some(format!(
                         "{:?} not reachable from {:?}",
-                        target, self.connection
+                        target, self.device.connection
                     ));
                     return Task::none();
                 }
@@ -31,10 +31,10 @@ impl App {
                 Task::none()
             }
             RebootMsg::RebootTo(target) => {
-                if self.busy {
+                if self.operation.is_running() {
                     return Task::none();
                 }
-                let conn = self.connection;
+                let conn = self.device.connection;
                 if !target.available_from(conn) {
                     self.error_msg = Some(format!("{:?} not reachable from {:?}", target, conn));
                     return Task::none();
@@ -52,7 +52,7 @@ impl App {
                     tr_args!(
                         "log_reboot_target_from",
                         target = self.t(target.label_key()),
-                        source = self.t(conn.label_key())
+                        source = self.t(self.connection_label_key())
                     ),
                 ));
                 let reboot_cmd_sent = self.t("log_reboot_command_sent").to_string();

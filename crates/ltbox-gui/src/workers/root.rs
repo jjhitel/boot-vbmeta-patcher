@@ -2,6 +2,7 @@
 //! / APatch / GKI), flash them over EDL, and stage the manager APK.
 //! Extracted from the update_root handler.
 
+use crate::backup::{create_backup_dir, write_backup_manifest};
 use crate::{
     ConnectionStatus, Family, LiveLabels, PhaseReporter, Provider, RootMode, VerChoice,
     fingerprint_token_match, install_root_manager_apk, open_edl_session, prepare_tb323fu_efisp,
@@ -9,8 +10,6 @@ use crate::{
     wait_and_install_root_manager_apk,
 };
 use ltbox_core::{i18n::tr, live, tr_args};
-
-use super::root_backup::{ROOT_BACKUP_MANIFEST_NAME, write_root_backup_manifest};
 
 fn fingerprint_matches_detected_model(fingerprint: &str, device_model: &str) -> bool {
     fingerprint_token_match(fingerprint, device_model)
@@ -70,7 +69,7 @@ pub(crate) fn root_worker(
     phases: PhaseReporter,
 ) -> Result<Vec<String>, String> {
     let mut log = Vec::new();
-    if ltbox_core::model::is_xiaoxin_pro13_model(&device_model) {
+    if !ltbox_core::model::capabilities(&device_model).root {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
     let skip_adb = conn.skip_adb();
@@ -78,6 +77,9 @@ pub(crate) fn root_worker(
     // GKI route: AnyKernel3 zip is the full input —
     // no provider / version / GitHub fetch.
     let is_gki_route = mode == Some(RootMode::Gki);
+    if is_gki_route && !ltbox_core::model::capabilities(&device_model).gki_root {
+        return Err(tr_args!("model_unsupported", model = "TB323FU"));
+    }
     let family = family.ok_or_else(|| tr("err_root_family_missing"))?;
     let is_skroot_route = family == Family::Skroot;
     let (provider, version) =
@@ -273,6 +275,7 @@ pub(crate) fn root_worker(
     let mut keep_staging = false;
     let manager_installed_pre_edl = if adb_ready_at_start {
         if let Some(path) = manager_apk.as_ref() {
+            phases.mark_writes_started();
             match install_root_manager_apk(path, &mut log) {
                 Ok(()) => true,
                 Err(e) => {
@@ -339,14 +342,13 @@ pub(crate) fn root_worker(
 
             // Phase 4/8 — Read stock AVB-protected root images.
             live!(log, "[Root] {}", phases.marker(4));
-            // Hoisted so Phase 6 can echo the path.
-            // Routed through `app_paths::backup_dir_for`
-            // so AppImage / distro Linux installs don't
-            // try to write next to the executable.
-            let backup_dir = ltbox_core::app_paths::backup_dir_for(&format!("backup_{base_name}"));
+            // Hoisted so Phase 6 can echo the path. The directory is reserved
+            // only after every required dump has been verified, immediately
+            // before the first patch/write operation.
+            let backup_dir: std::path::PathBuf;
             // Set inside the dump block from the dumped root image's
             // fingerprint; carried to Phase 5 to skip AVB + vbmeta.
-            let is_tb323fu;
+            let uses_gbl;
             // Whether the stock vbmeta ended up in the backup folder, so the
             // manifest can tell Unroot which partitions to restore.
             let vbmeta_backed_up;
@@ -403,12 +405,13 @@ pub(crate) fn root_worker(
                             image = root_image_name
                         )
                     })?;
-                // Bidirectional SKU equivalence makes the TB376FC token match TB390FU too.
-                if ltbox_core::model::fingerprint_model_match(
-                    &root_image_fingerprint,
-                    ltbox_core::model::TB376FC_MODEL,
-                ) {
+                let image_capabilities =
+                    || ltbox_core::model::fingerprint_capabilities(&root_image_fingerprint);
+                if image_capabilities().any(|capabilities| !capabilities.root) {
                     return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
+                }
+                if is_gki_route && image_capabilities().any(|capabilities| !capabilities.gki_root) {
+                    return Err(tr_args!("model_unsupported", model = "TB323FU"));
                 }
                 if !fingerprint_matches_detected_model(&root_image_fingerprint, &device_model) {
                     return Err(tr_args!(
@@ -417,12 +420,12 @@ pub(crate) fn root_worker(
                         fingerprint = root_image_fingerprint
                     ));
                 }
-                is_tb323fu = fingerprint_token_match(&root_image_fingerprint, "TB323FU");
+                uses_gbl = image_capabilities().any(|capabilities| capabilities.root_uses_gbl);
 
                 // vbmeta is read only when the run rebuilds it: TB323FU takes
                 // the GBL route, and every other non-TB320FC model chains the
                 // boot target, which leaves vbmeta byte-identical either way.
-                vbmeta_backed_up = rebuild_vbmeta && !is_tb323fu;
+                vbmeta_backed_up = rebuild_vbmeta && !uses_gbl;
                 if vbmeta_backed_up {
                     session
                         .dump_partition(
@@ -444,7 +447,7 @@ pub(crate) fn root_worker(
                 // TB323FU root needs provisioned efisp; once present, skip AVB
                 // footer and vbmeta writes. Keep the verified fingerprint so
                 // an empty efisp can fetch the matching region GBL.
-                if is_tb323fu {
+                if uses_gbl {
                     let efi_dir = ltbox_core::app_paths::work_dir_for("root_efisp");
                     root_efisp_efi = prepare_tb323fu_efisp(
                         &mut session,
@@ -457,48 +460,53 @@ pub(crate) fn root_worker(
                 }
                 // Stock-image safety net for Unroot, captured
                 // before the irreversible patch + flash. A copy
-                // failure must abort the run.
-                std::fs::create_dir_all(&backup_dir).map_err(|e| {
+                // failure must abort the run. Reserve a fresh directory for
+                // every root operation so no previous run can be overwritten.
+                let actual_backup_dir = create_backup_dir("root", &device_model).map_err(|e| {
                     tr_args!(
                         "err_root_backup_dir_failed",
-                        path = backup_dir.display(),
+                        path = "backup/root",
                         error = e
                     )
                 })?;
-                std::fs::copy(&dumped_root_image, backup_dir.join(root_image_name)).map_err(
-                    |e| {
+                std::fs::copy(&dumped_root_image, actual_backup_dir.join(root_image_name))
+                    .map_err(|e| {
                         tr_args!(
                             "err_root_backup_copy_failed",
                             image = root_image_name,
                             error = e
                         )
-                    },
-                )?;
-                if vbmeta_backed_up {
-                    std::fs::copy(&dumped_vbmeta, backup_dir.join("vbmeta.img")).map_err(|e| {
-                        tr_args!(
-                            "err_root_backup_copy_failed",
-                            image = "vbmeta.img",
-                            error = e
-                        )
                     })?;
+                if vbmeta_backed_up {
+                    std::fs::copy(&dumped_vbmeta, actual_backup_dir.join("vbmeta.img")).map_err(
+                        |e| {
+                            tr_args!(
+                                "err_root_backup_copy_failed",
+                                image = "vbmeta.img",
+                                error = e
+                            )
+                        },
+                    )?;
                 }
-                write_root_backup_manifest(&backup_dir, base_name, vbmeta_backed_up).map_err(
-                    |e| {
-                        tr_args!(
-                            "err_root_backup_copy_failed",
-                            image = ROOT_BACKUP_MANIFEST_NAME,
-                            error = e
-                        )
-                    },
-                )?;
+                // The manifest is descriptive metadata only. A failure to
+                // record it must not turn a valid stock-image backup into a
+                // failed root run.
+                if let Err(error) = write_backup_manifest(
+                    &actual_backup_dir,
+                    "root",
+                    &device_model,
+                    Some(root_image_fingerprint.as_str()),
+                    Some(slot_suffix.as_str()),
+                ) {
+                    live!(log, "[Root] backup manifest write skipped: {error}");
+                }
                 if vbmeta_backed_up {
                     live!(
                         log,
                         "[Root] {} {} + vbmeta.img → {}",
                         ll.root_backup_copy_prefix,
                         root_image_name,
-                        backup_dir.display()
+                        actual_backup_dir.display()
                     );
                 } else {
                     live!(
@@ -506,15 +514,16 @@ pub(crate) fn root_worker(
                         "[Root] {} {} → {}",
                         ll.root_backup_copy_prefix,
                         root_image_name,
-                        backup_dir.display()
+                        actual_backup_dir.display()
                     );
                 }
+                backup_dir = actual_backup_dir;
                 // Bounce to Sahara — otherwise the second
                 // session's sahara_run times out because
                 // the device is still in Firehose.
                 session
                     .reset_to_edl(&mut log)
-                    .map_err(|e| tr_args!("err_root_reset_to_edl_failed", error = e))?;
+                    .map_err(|e| tr_args!("err_reboot_edl_reset_failed", error = e))?;
                 live!(log, "[EDL] {}", ll.closing_dump);
                 // Drop session — serial port closes so
                 // the post-patch open gets a fresh handle.
@@ -536,7 +545,7 @@ pub(crate) fn root_worker(
             // keeps the two phases in lockstep automatically
             // if a future field gets added to the struct.
             let cfg = manager_cfg.clone();
-            let artifacts = build_patched_artifacts(&cfg, is_tb323fu, &mut log)
+            let artifacts = build_patched_artifacts(&cfg, uses_gbl, &mut log)
                 .map_err(|e| tr_args!("err_root_patch_failed", error = e))?;
             if manager_apk.is_none() {
                 manager_apk = artifacts.manager_apk.clone();
@@ -556,9 +565,11 @@ pub(crate) fn root_worker(
             // begins, the error path leaves the device in EDL rather than
             // rebooting a partial chain.
             if let Some(efi) = &root_efisp_efi {
+                phases.mark_writes_started();
                 writes_started = true;
                 provision_tb323fu_efisp(&mut session, Some(efi), &mut log)?;
             }
+            phases.mark_writes_started();
             writes_started = true;
             session
                 .flash_partition(
@@ -576,6 +587,7 @@ pub(crate) fn root_worker(
                     )
                 })?;
             if let Some(vbpath) = &artifacts.patched_vbmeta {
+                phases.mark_writes_started();
                 session
                     .flash_partition(&vbmeta_primary, vbpath, 0, ROOT_PARTITIONS_LUN, &mut log)
                     .map_err(|e| {
@@ -588,14 +600,12 @@ pub(crate) fn root_worker(
             }
             // Surface the backup folder before the reset
             // so the user doesn't have to scroll.
-            if backup_dir.exists() {
-                live!(
-                    log,
-                    "[Root] {} {}",
-                    ll.backup_saved_prefix,
-                    backup_dir.display()
-                );
-            }
+            live!(
+                log,
+                "[Root] {} {}",
+                ll.backup_saved_prefix,
+                backup_dir.display()
+            );
             // Phase 7/8 — Reboot to Android.
             live!(log, "[Root] {}", phases.marker(7));
             session.reset_tolerant(&mut log);
@@ -641,7 +651,11 @@ pub(crate) fn root_worker(
                     )
                 );
             }
-            live!(log, "[Root] {}", ll.root_completed);
+            live!(
+                log,
+                "[Root] {}",
+                ltbox_core::i18n::tr("live_image_flash_completed")
+            );
             Ok(())
         })();
     match device_phase_result {
@@ -701,6 +715,61 @@ fn should_reset_after_root_device_error(writes_started: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_model_workers_reject_before_inputs_or_device_access() {
+        let app = crate::App::default();
+        let phases = || PhaseReporter::from_labels(vec!["prepare".into()]);
+        for model in ["TB376FC", "TB390FU", "TB323FU"] {
+            let result = root_worker(
+                None,
+                Some(RootMode::Gki),
+                None,
+                None,
+                None,
+                None,
+                model.into(),
+                ConnectionStatus::None,
+                None,
+                Vec::new(),
+                String::new(),
+                None,
+                String::new(),
+                app.live_labels(),
+                phases(),
+            );
+            let blocked = if model == "TB323FU" {
+                "TB323FU"
+            } else {
+                "TB376FC / TB390FU"
+            };
+            assert_eq!(
+                result.unwrap_err(),
+                tr_args!("model_unsupported", model = blocked)
+            );
+        }
+        for model in ["TB376FC", "TB390FU"] {
+            let expected = tr_args!("model_unsupported", model = "TB376FC / TB390FU");
+            let result = super::super::unroot::unroot_worker(
+                String::new(),
+                crate::UnrootType::MagiskLkm,
+                None,
+                model.into(),
+                ConnectionStatus::None,
+                phases(),
+            );
+            assert_eq!(result.unwrap_err(), expected);
+            let result = super::super::konabess::konabess_inspection_worker(
+                ConnectionStatus::None,
+                std::path::PathBuf::new(),
+                false,
+                model.into(),
+                app.live_labels(),
+                phases(),
+            );
+            assert_eq!(result.unwrap_err(), expected);
+        }
+    }
 
     #[test]
     fn pre_write_failures_still_reset() {

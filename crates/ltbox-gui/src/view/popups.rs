@@ -6,6 +6,33 @@ use iced::{Element, Length, Theme};
 use theme::with_alpha;
 
 impl App {
+    pub(crate) fn software_fix_confirm_dialog(&self) -> Element<'_, Message> {
+        let d = self.density();
+        m3_dialog(
+            column![
+                text(self.t("software_fix_confirm_title").to_string()).size(d.text(20.0)),
+                text(self.t("software_fix_elevation_hint").to_string())
+                    .size(d.text(13.0))
+                    .style(muted_style),
+                row![
+                    Space::new().width(Length::Fill),
+                    m3_text_button(self.t("btn_cancel").to_string())
+                        .on_press(Message::CancelCloseSoftwareFix),
+                    m3_filled_button(self.t("btn_ok").to_string()).on_press_maybe(
+                        self.can_close_software_fix()
+                            .then_some(Message::ConfirmCloseSoftwareFix)
+                    ),
+                ]
+                .spacing(d.space(10.0))
+                .align_y(iced::Alignment::Center),
+            ]
+            .spacing(d.space(16.0))
+            .padding(d.space(24.0))
+            .width(Length::Fixed(d.width(380.0)))
+            .into(),
+        )
+    }
+
     /// Illustrated guide for the data-capable port on dual-USB-C tablets.
     pub(crate) fn dual_usb_help_dialog(&self) -> Element<'_, Message> {
         let model = self.dual_usb_help_model.clone();
@@ -285,7 +312,7 @@ impl App {
         )
         .size(theme::text_size::BODY_LARGE);
 
-        let state_body: Element<'_, Message> = match &self.direct_update_state {
+        let state_body: Element<'_, Message> = match &self.operation.direct_update {
             DirectUpdateState::Ready => text(self.t("update_dialog_direct_body").to_string())
                 .size(theme::text_size::BODY_MEDIUM)
                 .style(muted_style)
@@ -347,7 +374,7 @@ impl App {
             .spacing(DIRECT_UPDATE_DIALOG_ACTION_SPACING)
             .align_y(iced::Alignment::Center);
         if matches!(
-            &self.direct_update_state,
+            &self.operation.direct_update,
             DirectUpdateState::Ready | DirectUpdateState::Failed(_)
         ) {
             actions = actions.push(
@@ -358,26 +385,36 @@ impl App {
                 m3_text_button(self.t("update_dialog_release_page").to_string())
                     .on_press(Message::OpenUpdateReleasePage),
             );
-            let install_label = if matches!(&self.direct_update_state, DirectUpdateState::Ready) {
+            let install_label = if matches!(&self.operation.direct_update, DirectUpdateState::Ready)
+            {
                 self.t("update_dialog_install")
             } else {
                 self.t("btn_retry")
             };
             actions = actions.push(
-                m3_filled_button(install_label.to_string()).on_press(Message::InstallSelfUpdate),
+                m3_filled_button(install_label.to_string()).on_press_maybe(
+                    self.can_install_self_update()
+                        .then_some(Message::InstallSelfUpdate),
+                ),
             );
         }
 
-        let content = column![
-            title,
-            version,
-            state_body,
-            widget::rule::horizontal(1),
-            actions,
-        ]
-        .spacing(14)
-        .padding(DIRECT_UPDATE_DIALOG_PADDING)
-        .width(DIRECT_UPDATE_DIALOG_WIDTH);
+        let mut content = column![title, version, state_body];
+        if let Some(reason) = self.self_update_blocked_reason() {
+            content = content.push(
+                text(reason)
+                    .size(theme::text_size::BODY_MEDIUM)
+                    .style(muted_style)
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+                    .width(Length::Fill),
+            );
+        }
+        let content = content
+            .push(widget::rule::horizontal(1))
+            .push(actions)
+            .spacing(14)
+            .padding(DIRECT_UPDATE_DIALOG_PADDING)
+            .width(DIRECT_UPDATE_DIALOG_WIDTH);
         m3_dialog(content.into())
     }
 
@@ -395,7 +432,8 @@ impl App {
         // cached; clicking copies the unmodified `data` JSON to the
         // clipboard and surfaces a toast.
         let copy_payload: Option<String> = self
-            .device_info_cache
+            .queries
+            .info_cache
             .get(&serial)
             .map(|i| i.data_pretty.clone());
         let copy_glyph = text("⧉").size(16);
@@ -452,7 +490,7 @@ impl App {
                 self.popup_error_view("device_info_popup_error", e, Message::DeviceInfoRetry)
             }
             DeviceInfoState::Ready => {
-                let info = match self.device_info_cache.get(&serial) {
+                let info = match self.queries.info_cache.get(&serial) {
                     Some(i) => i,
                     None => {
                         return container(text("")).into();
@@ -848,10 +886,10 @@ impl App {
     /// meaningless without knowing which partition it guards and what
     /// the number represents.
     pub(crate) fn rollback_detail_popup_view(&self) -> Element<'_, Message> {
-        let Some(floors) = self.device_rollback_floors else {
+        let Some(floors) = self.device.rollback_floors else {
             return container(text("")).into();
         };
-        let slot = active_slot_suffix(Some(&self.device_slot));
+        let slot = active_slot_suffix(Some(&self.device.slot));
 
         let title = text(self.t("rollback_popup_title").to_string())
             .size(theme::text_size::WIZARD_STEP_TITLE)
@@ -1205,7 +1243,7 @@ impl App {
         // rows render as disabled buttons so the constraint stays visible. The
         // Advanced "Change Country Code" op has no such restriction (any country,
         // any model), so the gate is lifted there. "Do not change" stays usable.
-        let tb322fc = self.is_tb322fc() && !self.adv_needs_country;
+        let tb322fc = self.model_capabilities().prc_only && !self.adv_needs_country;
         for entry in COUNTRY_CODES {
             let code = entry.code.to_string();
             let selected = selected_code == Some(entry.code);
@@ -1326,7 +1364,7 @@ impl App {
     pub(crate) fn flash_confirm_edit_popup(&self, field: ConfirmField) -> Element<'_, Message> {
         // (label, selected, on_press, disabled)
         let cfg = &self.wf_config;
-        let tb322 = self.is_tb322fc();
+        let tb322 = self.model_capabilities().prc_only;
         let opts: Vec<(String, bool, Message, bool)> = match field {
             ConfirmField::Region => [DeviceRegion::Prc, DeviceRegion::Row]
                 .into_iter()
@@ -1402,7 +1440,8 @@ impl App {
                     .to_string(),
                     cfg.modify_rollback == s,
                     Message::Flash(FlashMsg::FlashConfirmSetRollback(s)),
-                    false,
+                    effective_rollback_mode(self.flash_rollback_policy(), s.to_mode())
+                        != s.to_mode(),
                 )
             })
             .collect(),

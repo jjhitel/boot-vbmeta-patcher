@@ -58,8 +58,8 @@ impl App {
                 self.t("btn_next").to_string()
             };
             let can = self.root.can_next()
-                && !self.is_xiaoxin_pro13()
-                && !(self.busy && is_start)
+                && ltbox_core::model::capabilities(&self.device.model).root
+                && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
             wizard_nav(self.root.step > 0, &label_owned, can, self.t("btn_back"))
         } else {
@@ -398,7 +398,7 @@ impl App {
 
     pub(crate) fn root_family_step(&self) -> Element<'_, Message> {
         let d = self.density();
-        let xiaoxin_pro13 = self.is_xiaoxin_pro13();
+        let xiaoxin_pro13 = !ltbox_core::model::capabilities(&self.device.model).root;
         let unsupported = tr_args!("model_unsupported", model = "TB376FC / TB390FU");
         let families = [
             Family::Magisk,
@@ -621,7 +621,7 @@ impl App {
         .style(move |t: &Theme, status| sel_card_btn_style(t, status, selected));
         let chips = self.recent_file_chips(
             LOADER_PICKER_EXTS,
-            |p| Message::RecentFilePicked(PickerTarget::RootLoader, p),
+            |p| Message::Root(RootMsg::RootLoaderChosen(Some(p))),
             "picker_recents",
         );
         let col = column![
@@ -655,7 +655,7 @@ impl App {
         let d = self.density();
         let columns = 2;
         let side = self.wizard_square_side();
-        let tb323fu = self.is_tb323fu();
+        let tb323fu = !ltbox_core::model::capabilities(&self.device.model).gki_root;
         let unsupported_tb323fu = tr_args!("model_unsupported", model = "TB323FU");
         let lkm_card = icon_option_card_sub_square_sized(
             RootMode::Lkm.icon(self.wizard_square_icon()),

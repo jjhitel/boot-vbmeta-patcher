@@ -4,7 +4,8 @@
 //! replacing `ltbox.exe` keeps preferences).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -255,17 +256,45 @@ fn first_run_default() -> PersistedSettings {
     }
 }
 
-/// Persist settings. Errors are swallowed so a read-only config dir
-/// doesn't break the GUI.
+/// Persist settings without exposing a partial JSON file. Report failures in
+/// the log while allowing the GUI to continue with its in-memory settings.
 pub fn save(settings: &PersistedSettings) {
-    let Some(path) = config_path() else { return };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(settings) {
-        let _ = std::fs::write(&path, json);
+    let Some(path) = config_path() else {
+        tracing::warn!("cannot save settings: no configuration directory is available");
+        return;
+    };
+    if let Err(error) = save_to_path(&path, settings) {
+        tracing::warn!(path = %path.display(), %error, "failed to save settings");
     }
 }
+
+fn save_to_path(path: &Path, settings: &PersistedSettings) -> io::Result<()> {
+    // Serialize first so a serialization failure cannot touch the saved file.
+    let json = serde_json::to_vec_pretty(settings).map_err(io::Error::other)?;
+    atomic_write_with(path, |file| file.write_all(&json))
+}
+
+fn atomic_write_with(
+    path: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    // A unique sibling keeps replacement on the same filesystem. RAII removes
+    // only the temporary file on write/sync/replace failure, never the original.
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    write(temporary.as_file_mut())?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path).map_err(|error| error.error)?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "settings_store_tests.rs"]
+mod persistence_tests;
 
 #[cfg(test)]
 mod tests {

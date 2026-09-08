@@ -1,7 +1,7 @@
 //! Launch-time screenshot scenes for the opt-in `demo` feature.
 //!
 //! `LTBOX_DEMO` accepts dashboard scenes `dashboard`, `drivers-missing`,
-//! `adb-conflict`, and `dual-usb-advisory`, plus wizard scenes `<flow>:<step>`
+//! `adb-conflict`, `software-fix`, and `dual-usb-advisory`, plus wizard scenes `<flow>:<step>`
 //! where `flow` is `same` or `other` and `step` is `region`, `target`, `data`,
 //! `country`, `folder`, `confirm`, or `flash`. It also accepts first-screen view scenes
 //! `view:root`, `view:unroot`, `view:sysupdate`, `view:konabess`,
@@ -17,6 +17,7 @@ pub(crate) const VALID_SCENES: &[&str] = &[
     "dashboard",
     "drivers-missing",
     "adb-conflict",
+    "software-fix",
     "dual-usb-advisory",
     "same:region",
     "same:target",
@@ -59,6 +60,7 @@ pub(crate) enum Scene {
     Dashboard,
     DriversMissing,
     AdbConflict,
+    SoftwareFix,
     DualUsbAdvisory,
     Wizard { flow: Flow, step: WizardStep },
     View(View),
@@ -109,6 +111,7 @@ impl Scene {
             "dashboard" => Some(Self::Dashboard),
             "drivers-missing" => Some(Self::DriversMissing),
             "adb-conflict" => Some(Self::AdbConflict),
+            "software-fix" => Some(Self::SoftwareFix),
             "dual-usb-advisory" => Some(Self::DualUsbAdvisory),
             "view:root" => Some(Self::View(View::Root)),
             "view:unroot" => Some(Self::View(View::Unroot)),
@@ -160,7 +163,7 @@ impl Scene {
 
     fn poll_result(self) -> DevicePollResult {
         match self {
-            Self::DriversMissing => return DevicePollResult::default(),
+            Self::SoftwareFix | Self::DriversMissing => return DevicePollResult::default(),
             Self::AdbConflict => {
                 return DevicePollResult {
                     status: ConnectionStatus::AdbServerBlocking,
@@ -225,6 +228,10 @@ pub(crate) fn initialize(app: &mut App) {
         _ => ltbox_device::driver::DriverStatus::Present,
     });
     app.online = Some(true);
+    app.software_fix.running = scene == Scene::SoftwareFix;
+    if scene == Scene::SoftwareFix {
+        app.startup_disclaimer_open = false;
+    }
 
     if scene == Scene::DualUsbAdvisory {
         apply_dual_usb_advisory_scene(app);
@@ -239,7 +246,11 @@ pub(crate) fn initialize(app: &mut App) {
         Scene::Root(root_scene) => apply_root_scene(app, root_scene),
         Scene::AdvancedRegionTarget => apply_advanced_region_target_scene(app),
         Scene::SysUpdateRescue(rescue_scene) => apply_sysupdate_rescue_scene(app, rescue_scene),
-        Scene::DualUsbAdvisory | Scene::Dashboard | Scene::DriversMissing | Scene::AdbConflict => {}
+        Scene::SoftwareFix
+        | Scene::DualUsbAdvisory
+        | Scene::Dashboard
+        | Scene::DriversMissing
+        | Scene::AdbConflict => {}
     }
 }
 
@@ -386,11 +397,12 @@ fn apply_wizard_scene(app: &mut App, flow: Flow, step: WizardStep) {
     app.country_popup_open = step == WizardStep::Country;
 
     if step == WizardStep::Flash {
-        let _ = app.begin_phased_op(View::Flash, OperationPhaseKind::Flash);
-        app.current_op_step = OperationPhaseKind::Flash
-            .firmware_progress_step()
-            .expect("flash operations have a firmware-writing phase")
-            - 1;
+        let reporter = app.begin_phased_op(View::Flash, OperationPhaseKind::Flash);
+        let _ = reporter.marker(
+            OperationPhaseKind::Flash
+                .firmware_progress_step()
+                .expect("flash operations have a firmware-writing phase"),
+        );
     }
 }
 
@@ -433,6 +445,7 @@ pub(crate) fn blocks_device_action(app: &App, message: &Message) -> bool {
                 | Message::FlashPhys(_)
                 | Message::SimpleFlash(_)
                 | Message::Reboot(_)
+                | Message::ConfirmCloseSoftwareFix
                 | Message::KillAdbServer
                 | Message::InstallDrivers
         )
@@ -471,7 +484,7 @@ mod tests {
 
         apply_dual_usb_advisory_scene(&mut app);
 
-        assert_eq!(app.device_model, "TB323FU");
+        assert_eq!(app.device.model, "TB323FU");
         assert_eq!(app.dual_usb_advisory_model(), Some("TB323FU"));
         assert!(app.dual_usb_help_open);
         assert!(!app.startup_disclaimer_open);
@@ -486,13 +499,13 @@ mod tests {
         };
         drop(app.update(Message::DevicePolled(scene.poll_result())));
 
-        assert!(app.device_serial.is_empty());
+        assert!(app.device.serial.is_empty());
         drop(app.begin_flash_region_auto());
 
         assert_eq!(app.flash.device_region, Some(DeviceRegion::Row));
         assert_eq!(app.flash.step, 1);
         assert!(app.flash_serial_prompt.is_none());
-        assert!(app.flash_region_pending.is_none());
+        assert!(app.queries.region_pending.is_none());
 
         app.flash.device_region = Some(DeviceRegion::Prc);
         app.flash.step = 4;
@@ -525,15 +538,15 @@ mod tests {
             }
 
             assert_eq!(app.current_view, expected_view);
-            assert_eq!(app.connection, ConnectionStatus::Adb);
-            assert_eq!(app.device_model, "TB520FU");
-            assert_eq!(app.device_market_name, "YOGA Pad Pro");
-            assert_eq!(app.device_ram, "12 GB");
-            assert_eq!(app.device_storage, "256 GB");
-            assert_eq!(app.device_slot, "_a");
-            assert_eq!(app.device_arb, "arb_yes");
-            assert_eq!(app.device_firmware, "ZUXOS_1.5.10.186_ST_260408");
-            assert_eq!(app.device_firmware_full, "ZUXOS_1.5.10.186_ST_260408");
+            assert_eq!(app.device.connection, ConnectionStatus::Adb);
+            assert_eq!(app.device.model, "TB520FU");
+            assert_eq!(app.device.market_name, "YOGA Pad Pro");
+            assert_eq!(app.device.ram, "12 GB");
+            assert_eq!(app.device.storage, "256 GB");
+            assert_eq!(app.device.slot, "_a");
+            assert_eq!(app.device.arb, "arb_yes");
+            assert_eq!(app.device.firmware, "ZUXOS_1.5.10.186_ST_260408");
+            assert_eq!(app.device.firmware_full, "ZUXOS_1.5.10.186_ST_260408");
 
             match expected_view {
                 View::Root => assert_eq!(app.root.step, 0),
@@ -670,15 +683,15 @@ mod tests {
     fn dashboard_identity_is_populated_but_unreadable_scenes_stay_empty() {
         let mut dashboard = App::default();
         drop(dashboard.update(Message::DevicePolled(Scene::Dashboard.poll_result())));
-        assert_eq!(dashboard.connection, ConnectionStatus::Adb);
-        assert_eq!(dashboard.device_model, "TB520FU");
-        assert_eq!(dashboard.device_market_name, "YOGA Pad Pro");
-        assert_eq!(dashboard.device_ram, "12 GB");
-        assert_eq!(dashboard.device_storage, "256 GB");
-        assert_eq!(dashboard.device_slot, "_a");
-        assert_eq!(dashboard.device_arb, "arb_yes");
-        assert_eq!(dashboard.device_firmware, "ZUXOS_1.5.10.186_ST_260408");
-        assert_eq!(dashboard.device_firmware_full, "ZUXOS_1.5.10.186_ST_260408");
+        assert_eq!(dashboard.device.connection, ConnectionStatus::Adb);
+        assert_eq!(dashboard.device.model, "TB520FU");
+        assert_eq!(dashboard.device.market_name, "YOGA Pad Pro");
+        assert_eq!(dashboard.device.ram, "12 GB");
+        assert_eq!(dashboard.device.storage, "256 GB");
+        assert_eq!(dashboard.device.slot, "_a");
+        assert_eq!(dashboard.device.arb, "arb_yes");
+        assert_eq!(dashboard.device.firmware, "ZUXOS_1.5.10.186_ST_260408");
+        assert_eq!(dashboard.device.firmware_full, "ZUXOS_1.5.10.186_ST_260408");
 
         for (scene, status) in [
             (Scene::DriversMissing, ConnectionStatus::None),
@@ -687,15 +700,15 @@ mod tests {
             let mut app = App::default();
             for _ in 0..2 {
                 drop(app.update(Message::DevicePolled(scene.poll_result())));
-                assert_eq!(app.connection, status);
-                assert!(app.device_model.is_empty());
-                assert!(app.device_market_name.is_empty());
-                assert!(app.device_ram.is_empty());
-                assert!(app.device_storage.is_empty());
-                assert!(app.device_slot.is_empty());
-                assert!(app.device_arb.is_empty());
-                assert!(app.device_firmware.is_empty());
-                assert!(app.device_firmware_full.is_empty());
+                assert_eq!(app.device.connection, status);
+                assert!(app.device.model.is_empty());
+                assert!(app.device.market_name.is_empty());
+                assert!(app.device.ram.is_empty());
+                assert!(app.device.storage.is_empty());
+                assert!(app.device.slot.is_empty());
+                assert!(app.device.arb.is_empty());
+                assert!(app.device.firmware.is_empty());
+                assert!(app.device.firmware_full.is_empty());
             }
         }
     }
@@ -713,11 +726,11 @@ mod tests {
 
         assert_eq!(app.current_view, View::Flash);
         assert_eq!(app.flash.step, 5);
-        assert!(app.busy);
-        assert_eq!(app.busy_view, Some(View::Flash));
-        assert_eq!(app.active_op_kind, Some(OperationPhaseKind::Flash));
-        assert_eq!(app.current_op_step, 6);
-        assert_eq!(app.op_steps.len(), 9);
+        assert!(app.operation.is_running());
+        assert_eq!(app.operation.view(), Some(View::Flash));
+        assert_eq!(app.operation.phase_kind(), Some(OperationPhaseKind::Flash));
+        assert_eq!(app.operation.current_step(), 6);
+        assert_eq!(app.operation.steps.len(), 9);
         assert!(blocks_flash_execution(&app));
     }
 
@@ -730,9 +743,9 @@ mod tests {
 
         drop(app.update_flash(FlashMsg::FlashExecStart));
 
-        assert!(!app.busy);
-        assert!(app.op_steps.is_empty());
-        assert_eq!(app.active_op_kind, None);
+        assert!(!app.operation.is_running());
+        assert!(app.operation.steps.is_empty());
+        assert_eq!(app.operation.phase_kind(), None);
     }
 
     #[test]

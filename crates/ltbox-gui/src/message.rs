@@ -11,6 +11,9 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
+    DeviceLookupEvent(crate::device_queries::LookupToken, Box<Message>),
+    /// A result owned by one foreground operation; late results are discarded.
+    OperationEvent(crate::operation_execution::OperationId, Box<Message>),
     /// No-op for click-blocker mouse_area widgets.
     Noop,
     StartupDisclaimerToggled(bool),
@@ -41,8 +44,16 @@ pub(crate) enum Message {
     OperationError(String),
     DismissError,
     StartOver,
+    PollSoftwareFix,
+    SoftwareFixPolled(Result<bool, String>),
+    ForceCloseSoftwareFix,
+    ConfirmCloseSoftwareFix,
+    CancelCloseSoftwareFix,
+    SoftwareFixClosed(Result<(), ltbox_device::software_fix::CloseError>),
     PollDevice,
     DevicePolled(DevicePollResult),
+    DevicePollFinished(u64, Option<DevicePollResult>),
+    AdbServerKillFinished(Result<(), String>),
     /// Dashboard "Kill Server" button fired when an external adb
     /// server is holding the Android USB interface — sends `host:kill`
     /// to `127.0.0.1:5037` so LTBox's libusb claim can succeed on the
@@ -266,7 +277,12 @@ pub(crate) enum RootMsg {
     RootVersion(VerChoice),
     RootNightlySource(NightlySource),
     RootSelectFile,
+    /// Open the EDL loader picker for the root pipeline. Named for the
+    /// step, which predates the field it fills.
     RootSelectFolder,
+    /// Loader picked for the root pipeline, or `None` on cancel. Routed
+    /// through `resolve_loader_input` like every other loader step.
+    RootLoaderChosen(Option<String>),
     RootNext,
     RootBack,
     RootSelectKpm,

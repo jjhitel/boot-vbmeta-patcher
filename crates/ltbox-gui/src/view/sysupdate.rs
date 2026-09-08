@@ -39,7 +39,7 @@ impl App {
                 self.t("btn_next").to_string()
             };
             let can = self.sysupdate.can_next()
-                && !(self.busy && is_start)
+                && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
             wizard_nav_generic(
                 self.sysupdate.step > 0,
@@ -104,7 +104,7 @@ impl App {
         // Boot Recovery worker targets, so the flow can't run on it — disable
         // the row (alongside the non-Qualcomm platform gate).
         let rescue_disabled =
-            self.platform_supported == Some(false) || self.is_tb323fu() || self.is_xiaoxin_pro13();
+            self.device.platform_supported == Some(false) || !self.model_capabilities().rescue;
         // Gray the icon when disabled, matching the other wizards' disabled
         // list rows.
         let rescue_icon = if rescue_disabled {
@@ -262,7 +262,7 @@ impl App {
     }
 
     pub(crate) fn exec_status_copy(&self) -> (String, String) {
-        if self.busy {
+        if self.operation.is_running() {
             (
                 self.t("exec_executing_title").to_string(),
                 self.t("exec_executing_subtitle").to_string(),
@@ -290,7 +290,7 @@ impl App {
         let d = self.density();
         let (_, detail) = self.exec_status_copy();
         let is_error = self.operation_error.is_some();
-        let is_busy = self.busy;
+        let is_busy = self.operation.is_running();
 
         // Shared progress/result card for wizard exec steps. One scale on
         // both axes: the badge is a circle.
@@ -349,12 +349,15 @@ impl App {
             .into()
         };
 
-        let (eyebrow_text, label_text) = if self.op_steps.is_empty() {
+        let (eyebrow_text, label_text) = if self.operation.steps.is_empty() {
             (String::new(), detail.clone())
         } else {
-            let idx = self.current_op_step.min(self.op_steps.len() - 1);
-            let total = self.op_steps.len();
-            let step = &self.op_steps[idx];
+            let idx = self
+                .operation
+                .current_step()
+                .min(self.operation.steps.len() - 1);
+            let total = self.operation.steps.len();
+            let step = &self.operation.steps[idx];
             let eyebrow_key = if is_error {
                 "exec_step_eyebrow_failed"
             } else if is_busy {

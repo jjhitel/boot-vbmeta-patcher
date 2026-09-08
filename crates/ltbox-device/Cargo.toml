@@ -30,4 +30,5 @@ windows-sys = { workspace = true, features = [
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
+    "Win32_System_Diagnostics_ToolHelp",
 ] }

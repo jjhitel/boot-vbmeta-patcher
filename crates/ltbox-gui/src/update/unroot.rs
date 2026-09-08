@@ -7,7 +7,7 @@ impl App {
     pub(crate) fn update_unroot(&mut self, msg: UnrootMsg) -> Task<Message> {
         match msg {
             UnrootMsg::SetUnrootType(t) => {
-                if self.is_xiaoxin_pro13() {
+                if !ltbox_core::model::capabilities(&self.device.model).unroot {
                     return Task::none();
                 }
                 self.unroot.unroot_type = Some(t);
@@ -25,10 +25,10 @@ impl App {
                 Message::Unroot(UnrootMsg::UnrootLoaderChosen(__v))
             }),
             UnrootMsg::UnrootLoaderChosen(path) => {
-                if let Some(p) = path {
-                    self.remember_recent(pickers::PickerKind::File, &p);
-                    self.unroot.loader_path = Some(p);
-                }
+                self.apply_loader_pick(path, |app, loader, err| {
+                    app.unroot.loader_path = loader;
+                    app.unroot.loader_error = err;
+                });
                 Task::none()
             }
             UnrootMsg::UnrootNext => {
@@ -56,7 +56,7 @@ impl App {
                 Task::none()
             }
             UnrootMsg::UnrootExecStart => {
-                if self.is_xiaoxin_pro13() {
+                if !ltbox_core::model::capabilities(&self.device.model).unroot {
                     self.error_msg =
                         Some(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
                     return Task::none();
@@ -67,8 +67,8 @@ impl App {
                 let Some(folder) = self.unroot.folder_path.clone() else {
                     return Task::none();
                 };
-                let conn = self.connection;
-                let device_model = self.device_model.clone();
+                let conn = self.device.connection;
+                let device_model = self.device.model.clone();
                 // Loader is decoupled from the backup folder — `folder`
                 // holds boot.img + vbmeta.img, the loader can live
                 // anywhere (Settings default, or whatever the user
@@ -86,7 +86,6 @@ impl App {
                     "[Unroot] {}",
                     tr_args!("log_op_starting", what = self.t(unroot_type.label_key()))
                 ));
-                let ll = self.live_labels();
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
@@ -97,7 +96,6 @@ impl App {
                                     loader_override,
                                     device_model,
                                     conn,
-                                    ll,
                                     phases,
                                 )
                             })

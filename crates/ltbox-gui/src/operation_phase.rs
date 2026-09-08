@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 use crate::AdvAction;
 use ltbox_core::tr_args;
@@ -214,9 +217,8 @@ impl OperationPhaseKind {
     }
 }
 
-/// Future Stage-D callbacks map into the stable inspect/patch/rebuild portion
+/// KonaBess build callbacks map into the stable inspect/patch/rebuild portion
 /// of the full EDL operation plan, matching the region worker's stage mapping.
-#[allow(dead_code)]
 pub(crate) const fn konabess_build_phase(stage: KonaBessBuildStage) -> usize {
     match stage {
         KonaBessBuildStage::Inspect => 3,
@@ -228,6 +230,13 @@ pub(crate) const fn konabess_build_phase(stage: KonaBessBuildStage) -> usize {
 #[derive(Debug, Clone)]
 pub(crate) struct PhaseReporter {
     labels: Arc<[String]>,
+    progress: Arc<OperationProgress>,
+}
+
+#[derive(Debug, Default)]
+struct OperationProgress {
+    step: AtomicUsize,
+    writes_started: AtomicBool,
 }
 
 impl PhaseReporter {
@@ -238,6 +247,7 @@ impl PhaseReporter {
         );
         Self {
             labels: labels.into(),
+            progress: Arc::default(),
         }
     }
 
@@ -257,7 +267,22 @@ impl PhaseReporter {
             .labels
             .get(index)
             .expect("worker marker must exist in its phase plan");
+        self.progress.step.store(index, Ordering::Relaxed);
         phase_marker(one_based, self.labels.len(), label)
+    }
+
+    pub(crate) fn current_step(&self) -> usize {
+        self.progress.step.load(Ordering::Relaxed)
+    }
+
+    /// Latches immediately before a device mutation is attempted. An error may
+    /// still leave a partial write, so this is never cleared within a run.
+    pub(crate) fn mark_writes_started(&self) {
+        self.progress.writes_started.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn writes_started(&self) -> bool {
+        self.progress.writes_started.load(Ordering::Relaxed)
     }
 }
 

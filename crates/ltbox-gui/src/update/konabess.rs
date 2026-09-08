@@ -7,7 +7,7 @@ use ltbox_core::tr_args;
 
 impl App {
     pub(crate) fn update_konabess(&mut self, msg: KonaBessMsg) -> Task<Message> {
-        if self.is_xiaoxin_pro13()
+        if !ltbox_core::model::capabilities(&self.device.model).konabess
             && matches!(
                 &msg,
                 KonaBessMsg::KonaBessSelectLoader | KonaBessMsg::KonaBessNext
@@ -21,23 +21,21 @@ impl App {
                 Message::KonaBess(KonaBessMsg::KonaBessLoaderChosen(path))
             }),
             KonaBessMsg::KonaBessLoaderChosen(path) => {
-                if let Some(path) = path {
-                    match self.resolve_loader_input(&path) {
-                        Ok(loader) if self.loader_fits_model(std::path::Path::new(&loader)) => {
-                            self.konabess.loader_path = Some(loader);
-                            self.konabess.loader_error = None;
+                self.apply_loader_pick(path, |app, loader, err| {
+                    // KonaBess additionally refuses a loader whose kind does not
+                    // match the connected model.
+                    match loader {
+                        Some(l) if !app.loader_fits_model(std::path::Path::new(&l)) => {
+                            app.konabess.loader_path = None;
+                            app.konabess.loader_error =
+                                Some(app.t("loader_model_mismatch_tooltip").to_string());
                         }
-                        Ok(_) => {
-                            self.konabess.loader_path = None;
-                            self.konabess.loader_error =
-                                Some(self.t("loader_model_mismatch_tooltip").to_string());
-                        }
-                        Err(message) => {
-                            self.konabess.loader_path = None;
-                            self.konabess.loader_error = Some(message);
+                        other => {
+                            app.konabess.loader_path = other;
+                            app.konabess.loader_error = err;
                         }
                     }
-                }
+                });
                 Task::none()
             }
             KonaBessMsg::KonaBessSelectImport => pickers::pick_file_for(
@@ -112,15 +110,16 @@ impl App {
                         match self.validate_loader_path(&selected) {
                             Ok(loader) if self.loader_fits_model(std::path::Path::new(&loader)) => {
                                 self.konabess.loader_error = None;
-                                if self.busy {
+                                if self.operation.is_running() {
                                     return Task::none();
                                 }
                                 self.konabess.cleanup_prepared();
                                 let phases = self
                                     .begin_phased_op(View::KonaBess, OperationPhaseKind::KonaBess);
-                                let conn = self.connection;
-                                let is_tb323fu = self.is_tb323fu();
-                                let device_model = self.device_model.clone();
+                                let conn = self.device.connection;
+                                let uses_gbl = ltbox_core::model::capabilities(&self.device.model)
+                                    .root_uses_gbl;
+                                let device_model = self.device.model.clone();
                                 let ll = self.live_labels();
                                 let loader = std::path::PathBuf::from(loader);
                                 return Task::perform(
@@ -130,7 +129,7 @@ impl App {
                                                 konabess_inspection_worker(
                                                     conn,
                                                     loader,
-                                                    is_tb323fu,
+                                                    uses_gbl,
                                                     device_model,
                                                     ll,
                                                     phases,
@@ -165,7 +164,7 @@ impl App {
                     }
                     1 if self.konabess.can_next() => self.konabess.next(),
                     2 if self.konabess.can_next() => {
-                        if self.busy {
+                        if self.operation.is_running() {
                             return Task::none();
                         }
                         let Some(loader) = self.konabess.loader_path.clone() else {
@@ -189,7 +188,6 @@ impl App {
                         self.konabess.next();
                         let phases =
                             self.begin_phased_op(View::KonaBess, OperationPhaseKind::KonaBess);
-                        let ll = self.live_labels();
                         return Task::perform(
                             async move {
                                 tokio::task::spawn_blocking(move || {
@@ -200,7 +198,6 @@ impl App {
                                             target_index,
                                             chip,
                                             table,
-                                            ll,
                                             phases,
                                         )
                                     })
@@ -234,9 +231,16 @@ impl App {
             KonaBessMsg::KonaBessInspectionReady(result) => {
                 self.flush_exec_done_log(result.log);
                 self.end_op();
-                self.current_op_step = 2;
+                self.operation.set_completed_step(2);
                 let probable_dtb_index = result.prepared.probable_dtb_index;
                 self.konabess.prepared = Some(result.prepared);
+                if self.operation.direct_update.is_active() {
+                    // Defensive overlap: finish the existing inspection's EDL
+                    // cleanup instead of retaining a table the update modal
+                    // cannot let the user apply or cancel. CancelDone releases
+                    // the busy reservation before the updater may exit.
+                    return self.cancel_konabess_inspection();
+                }
                 self.konabess
                     .apply_inspection_result(result.candidates, probable_dtb_index);
                 self.konabess.step = 1;
@@ -375,6 +379,39 @@ mod tests {
     }
 
     #[test]
+    fn self_update_waits_for_late_inspection_cleanup_before_exiting() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = app_ready_for_inspection_result();
+        let prepared = prepared(root.path(), None);
+        let work_dir = prepared.work_dir.clone();
+        app.begin_silent_op(View::KonaBess);
+        app.operation.direct_update = DirectUpdateState::Updating;
+
+        // Drop the cancellation task without contacting hardware. Its completion
+        // is injected below, after the updater reports success.
+        assert_eq!(
+            app.update(Message::KonaBess(KonaBessMsg::KonaBessInspectionReady(
+                KonaBessInspectionResult {
+                    prepared,
+                    candidates: vec![],
+                    log: vec![]
+                }
+            )))
+            .units(),
+            1
+        );
+        assert!(app.operation.is_running());
+        assert!(!app.konabess.target_popup_open);
+        drop(app.update(Message::SelfUpdateFinished(Ok(()))));
+        assert!(!app.can_exit_after_self_update());
+        drop(app.update(Message::KonaBess(KonaBessMsg::KonaBessCancelDone(vec![]))));
+        assert!(!app.operation.is_running());
+        assert!(app.konabess.prepared.is_none());
+        assert!(!work_dir.exists());
+        assert!(app.can_exit_after_self_update());
+    }
+
+    #[test]
     fn inspection_result_enters_target_picker_without_preselection() {
         let root = tempfile::tempdir().unwrap();
         let mut app = app_ready_for_inspection_result();
@@ -396,7 +433,7 @@ mod tests {
         assert_eq!(app.konabess.stock_table, None);
         assert_eq!(app.konabess.edited_table, None);
         assert_eq!(app.konabess.step, 1);
-        assert!(!app.busy);
+        assert!(!app.operation.is_running());
         assert_eq!(task.units(), 0);
     }
 
@@ -410,8 +447,11 @@ mod tests {
         std::fs::write(&prepared.vendor_boot, [1]).unwrap();
         std::fs::write(&prepared.vbmeta, [2]).unwrap();
         let mut app = App {
+            device: DeviceSnapshot {
+                connection: ConnectionStatus::Edl,
+                ..Default::default()
+            },
             current_view: View::KonaBess,
-            connection: ConnectionStatus::Edl,
             konabess: KonaBessWizard {
                 step: 1,
                 loader_path: Some(loader.display().to_string()),
@@ -497,7 +537,7 @@ mod tests {
             assert!(app.konabess.target_popup_open);
             assert_eq!(app.konabess.selected_target_index, expected_selection);
             assert_eq!(app.konabess.step, 1);
-            assert!(!app.busy);
+            assert!(!app.operation.is_running());
             assert_eq!(task.units(), 0);
         }
     }
@@ -542,7 +582,7 @@ mod tests {
         let task = app.update_konabess(KonaBessMsg::KonaBessNext);
 
         assert_eq!(task.units(), 1);
-        assert!(app.busy);
+        assert!(app.operation.is_running());
         assert_eq!(app.konabess.step, 0);
         assert!(app.konabess.import_path.is_none());
         assert!(app.konabess.edited_table.is_none());
@@ -572,7 +612,7 @@ mod tests {
 
         assert_eq!(task.units(), 1);
         assert_eq!(app.konabess.step, 3);
-        assert!(app.busy);
+        assert!(app.operation.is_running());
     }
 
     #[test]
@@ -616,7 +656,7 @@ mod tests {
 
         let cancel = app.update_konabess(KonaBessMsg::KonaBessBack);
         assert_eq!(cancel.units(), 1);
-        assert!(app.busy);
+        assert!(app.operation.is_running());
         let _ = app.update_konabess(KonaBessMsg::KonaBessCancelDone(vec![]));
         assert_eq!(app.konabess.step, 0);
         assert!(app.konabess.prepared.is_none());

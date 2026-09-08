@@ -318,24 +318,38 @@ pub(crate) fn flash_worker(
     // TB323FU keeps region vendor_boot/vbmeta AVB conversion off (it
     // provisions a GBL on efisp instead) but DOES take ARB
     // overlays. Region detect uses fp first, then model.
-    let tb323fu_skip_region = firmware_fingerprint
-        .as_deref()
-        .map(|fp| fingerprint_token_match(fp, "TB323FU"))
-        .unwrap_or(false)
-        || fingerprint_token_match(&device_model, "TB323FU");
+    let device_caps = capabilities(&device_model);
+    let firmware_caps = || {
+        firmware_fingerprint
+            .as_deref()
+            .into_iter()
+            .flat_map(fingerprint_capabilities)
+    };
+    let tb323fu_skip_region = device_caps.rollback == RollbackPolicy::Gbl
+        || firmware_caps().any(|caps| caps.rollback == RollbackPolicy::Gbl);
 
-    // GBL/ARB work follows the TARGET firmware identity
-    // (vendor_boot fp), never the connected device.
-    let target_is_tb323fu = firmware_fingerprint
-        .as_deref()
-        .map(|fp| fingerprint_token_match(fp, "TB323FU"))
-        .unwrap_or(false);
+    // GBL provisioning follows only the target firmware, never device identity.
+    let target_is_tb323fu = firmware_caps().any(|caps| caps.rollback == RollbackPolicy::Gbl);
     let xiaoxin_skip_region = xiaoxin_pro13_token(&device_model).is_some()
         || firmware_fingerprint
             .as_deref()
             .and_then(xiaoxin_pro13_token)
-            .is_some();
+            .is_some()
+        || device_caps.rollback == RollbackPolicy::ReadOnly
+        || firmware_caps().any(|caps| caps.rollback == RollbackPolicy::ReadOnly);
+    let skip_region_conversion = xiaoxin_skip_region
+        || !device_caps.region_avb_conversion
+        || firmware_caps().any(|caps| !caps.region_avb_conversion);
     let mut xiaoxin_pro13_flash = xiaoxin_skip_region;
+    if (device_caps.prc_only || firmware_caps().any(|caps| caps.prc_only))
+        && (cfg.modify_region
+            || cfg
+                .country_action
+                .target()
+                .is_some_and(|country| !country.eq_ignore_ascii_case("CN")))
+    {
+        return Err(ltbox_core::i18n::tr("err_flash_tb322fc_prc_only"));
+    }
 
     // EDL-start no longer forces rollback-bypass (or region) off. The device
     // model and committed rollback index are read by dumping vendor_boot +
@@ -488,8 +502,7 @@ pub(crate) fn flash_worker(
     //    (testkey device) or an abort (Lenovo-key device).
     let mut region_pair: Option<ltbox_patch::region::RegionAvbOutput> = None;
     if cfg.modify_region
-        && !tb323fu_skip_region
-        && !xiaoxin_skip_region
+        && !skip_region_conversion
         && fw_key_class != ltbox_patch::key_map::KeyClass::Lenovo
     {
         if has_vendor_boot && has_vbmeta {
@@ -717,11 +730,12 @@ pub(crate) fn flash_worker(
         match read_edl_start_device(&mut session, firmware_fingerprint.as_deref(), &mut log) {
             Ok(probe) => {
                 device_model = probe.model_token;
-                if !xiaoxin_pro13_flash && ltbox_core::model::is_xiaoxin_pro13_model(&device_model)
+                if !xiaoxin_pro13_flash
+                    && capabilities(&device_model).rollback == RollbackPolicy::ReadOnly
                 {
                     xiaoxin_pro13_flash = true;
                     if rb_mode != ltbox_patch::rollback::RollbackMode::Auto {
-                        rb_mode = ltbox_patch::rollback::RollbackMode::Auto;
+                        rb_mode = crate::effective_rollback_mode(RollbackPolicy::ReadOnly, rb_mode);
                         ltbox_core::live!(
                             log,
                             "[ARB] {}",
@@ -1396,64 +1410,29 @@ pub(crate) fn flash_worker(
     if target_is_tb323fu && (tb323fu_arb_need || cfg.modify_region) {
         // TB323FU's AVB fingerprint carries no region token; read the region
         // from the firmware vendor_boot's `product_region` DTB marker instead.
-        let is_prc = ltbox_patch::region::detect_product_region(&vendor_boot)
-            == Some(ltbox_patch::region::RegionTarget::Prc);
-        let suffix = efisp_asset_suffix(is_prc, tb323fu_arb_need);
-        let expected_name = efisp_expected_asset(suffix).ok_or_else(|| {
-            tr_args!(
-                "err_flash_efisp_asset_unknown",
-                asset = suffix,
-                tag = EFISP_GBL_RELEASE_TAG
-            )
-        })?;
-        ltbox_core::live!(
-            log,
-            "[Flash] {}",
-            tr_args!("live_flash_efisp_fetch", variant = suffix)
-        );
-        let gh = ltbox_core::github::GitHubClient::from_url("github.com/miner7222/gbl_root_baldur")
-            .map_err(|e| tr_args!("err_flash_efisp_github_failed", error = e))?;
-        // Pin to a known-good release tag instead of floating `latest`.
-        let assets = gh
-            .release_by_tag(EFISP_GBL_RELEASE_TAG)
-            .map_err(|e| tr_args!("err_flash_efisp_github_failed", error = e))?;
-        let (asset_name, asset_url) = assets
-            .into_iter()
-            .find(|(name, _)| name == expected_name)
-            .ok_or_else(|| {
-                tr_args!(
-                    "err_flash_efisp_asset_missing",
-                    suffix = expected_name,
-                    error = format!("tag {EFISP_GBL_RELEASE_TAG}")
+        let staged =
+            efisp_suffix_for_vendor_boot(&vendor_boot, tb323fu_arb_need).and_then(|suffix| {
+                fetch_efisp_asset(
+                    suffix,
+                    &ltbox_core::app_paths::work_dir_for("flash_efisp"),
+                    "[Flash]",
+                    &mut log,
                 )
-            })?;
-        // Refuse any name that is not in the pinned allow-list.
-        if efisp_expected_sha256(&asset_name).is_none() {
-            return Err(tr_args!(
-                "err_flash_efisp_asset_unknown",
-                asset = asset_name,
-                tag = EFISP_GBL_RELEASE_TAG
-            ));
-        }
-        let efi_dir = ltbox_core::app_paths::work_dir_for("flash_efisp");
-        let _ = std::fs::remove_dir_all(&efi_dir);
-        std::fs::create_dir_all(&efi_dir)
-            .map_err(|e| tr_args!("err_flash_efisp_work_dir_failed", error = e))?;
-        let efi_path = efi_dir.join(&asset_name);
-        ltbox_core::downloader::download_to_file(&asset_url, &efi_path, &mut log).map_err(|e| {
-            tr_args!(
-                "err_flash_efisp_download_failed",
-                asset = asset_name,
-                error = e
-            )
-        })?;
-        // Integrity check after download and before flash.
-        verify_efisp_asset(&efi_path, &asset_name)?;
-        ltbox_core::live!(
-            log,
-            "[Flash] {}",
-            tr_args!("live_flash_efisp_fetched", name = asset_name)
-        );
+            });
+        let efi_path = match staged {
+            Ok(path) => path,
+            Err(error) => {
+                // No partition writes have started. Release Firehose while
+                // preserving EDL for devices that started there for recovery.
+                live!(log, "[Flash] {error}");
+                if edl_start {
+                    let _ = session.reset_to_edl(&mut log);
+                } else {
+                    session.reset_tolerant(&mut log);
+                }
+                return Err(error);
+            }
+        };
         efisp_efi = Some(efi_path);
     }
 
@@ -1473,6 +1452,7 @@ pub(crate) fn flash_worker(
     // Lenovo-key bootloader on a testkey-resigned chain. Restore best-effort on
     // those error paths (device stays in EDL for retry); the success-path
     // restore below stays fatal.
+    phases.mark_writes_started();
     if let Err(e) = session.flash_rawprogram_with_wipe(&raw_xmls, &patch_xmls, cfg.wipe, &mut log) {
         let err = tr_args!("err_flash_firmware_failed", error = e.to_string());
         restore_abl_best_effort(&mut session, &abl_restore, &mut log);
@@ -1482,22 +1462,37 @@ pub(crate) fn flash_worker(
     // Phase 8/9 — Apply overlays and activate the target slot.
     live!(log, "[Flash] {}", phases.marker(8));
 
-    // Overlay ARB-patched boot/vbmeta_system by GPT name.
-    for (label, lun, patched) in &arb_patched {
-        live!(
-            log,
-            "[ARB] {}",
-            tr_args!("live_arb_flash_patched", label = label)
-        );
-        if let Err(e) = session.flash_partition(label, patched, 0, *lun, &mut log) {
-            let err = tr_args!(
-                "err_flash_arb_partition_failed",
-                label = label,
-                error = e.to_string()
+    // Check the entire final AVB overlay set against the post-rawprogram GPT
+    // before writing any member, including the converted vendor_boot and
+    // merged vbmeta in the Lenovo/testkey cross-region path.
+    let arb_images: Vec<_> = arb_patched
+        .iter()
+        .map(|(label, lun, image)| ltbox_device::edl::PartitionFlash {
+            label,
+            image,
+            slot: 0,
+            lun: *lun,
+        })
+        .collect();
+    if let Err(e) = session.flash_partition_batch(
+        &arb_images,
+        &mut log,
+        |label, _, log| {
+            live!(
+                log,
+                "[ARB] {}",
+                tr_args!("live_arb_flash_patched", label = label)
             );
-            restore_abl_best_effort(&mut session, &abl_restore, &mut log);
-            return Err(err);
-        }
+        },
+        || phases.mark_writes_started(),
+    ) {
+        let err = tr_args!(
+            "err_flash_arb_partition_failed",
+            label = e.partition,
+            error = e.source.to_string()
+        );
+        restore_abl_best_effort(&mut session, &abl_restore, &mut log);
+        return Err(err);
     }
 
     // Write the selected testkey bootloader on abl_a (the device backup in the
@@ -1510,6 +1505,7 @@ pub(crate) fn flash_worker(
             "[ARB] {}",
             ltbox_core::i18n::tr("live_flash_abl_restore")
         );
+        phases.mark_writes_started();
         if let Err(e) = session.flash_partition("abl_a", abl_img, 0, *lun, &mut log) {
             return Err(tr_args!(
                 "err_flash_abl_restore_failed",
@@ -1537,6 +1533,7 @@ pub(crate) fn flash_worker(
                     "[Flash] {}",
                     ltbox_core::i18n::tr("live_flash_efisp_flash")
                 );
+                phases.mark_writes_started();
                 if let Err(e) = session.flash_partition("efisp", efi, 0, efisp_lun, &mut log) {
                     ltbox_core::live!(
                         log,
@@ -1576,6 +1573,7 @@ pub(crate) fn flash_worker(
                         "[Flash] {}",
                         ltbox_core::i18n::tr("live_flash_efisp_erase")
                     );
+                    phases.mark_writes_started();
                     if let Err(e) = session.erase_partition_by_name("efisp", 0, efisp_lun, &mut log)
                     {
                         ltbox_core::live!(
@@ -1605,27 +1603,43 @@ pub(crate) fn flash_worker(
             ("vendor_boot_a", output.vendor_boot.as_path()),
             ("vbmeta_a", output.vbmeta.as_path()),
         ];
-        for (label, image) in overlays {
-            let Some(lun) = ltbox_core::partition_lun::lun_for_partition(label) else {
-                return Err(tr_args!("err_region_flash_no_lun", label = label));
-            };
-            live!(
-                log,
-                "[Region] {}",
+        let images = overlays
+            .into_iter()
+            .map(|(label, image)| {
+                let lun = ltbox_core::partition_lun::lun_for_partition(label)
+                    .ok_or_else(|| tr_args!("err_region_flash_no_lun", label = label))?;
+                Ok(ltbox_device::edl::PartitionFlash {
+                    label,
+                    image,
+                    slot: 0,
+                    lun,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        session
+            .flash_partition_batch(
+                &images,
+                &mut log,
+                |label, image, log| {
+                    live!(
+                        log,
+                        "[Region] {}",
+                        tr_args!(
+                            "live_region_flashing_final",
+                            label = label,
+                            path = image.display().to_string()
+                        )
+                    );
+                },
+                || phases.mark_writes_started(),
+            )
+            .map_err(|e| {
                 tr_args!(
-                    "live_region_flashing_final",
-                    label = label,
-                    path = image.display().to_string()
-                )
-            );
-            if let Err(e) = session.flash_partition(label, image, 0, lun, &mut log) {
-                return Err(tr_args!(
                     "err_region_flash_failed",
-                    label = label,
-                    error = e.to_string()
-                ));
-            }
-        }
+                    label = e.partition,
+                    error = e.source.to_string()
+                )
+            })?;
     }
 
     // Country-code/channel patch is best-effort after firmware flash. A
@@ -1651,13 +1665,7 @@ pub(crate) fn flash_worker(
             ));
         }
         // Keep original region partitions for manual restore.
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let critical_backup =
-            ltbox_core::app_paths::backup_dir_for(&format!("backup_critical_{ts}"));
-        std::fs::create_dir_all(&critical_backup)
+        let critical_backup = crate::backup::create_backup_dir("flash_firmware", &device_model)
             .map_err(|e| tr_args!("err_country_backup_dir_failed", error = e.to_string()))?;
         // Stash the bootloader's `getvar all` (incl. serialno) next to the
         // backed-up partitions — revives + supersedes v2's `sn.txt`. Empty on
@@ -1676,6 +1684,8 @@ pub(crate) fn flash_worker(
             &mut session,
             &work_dir,
             &critical_backup,
+            "flash_firmware",
+            firmware_fingerprint.as_deref(),
             &device_model,
             firmware_fingerprint.as_deref(),
             target_code,
@@ -1705,6 +1715,7 @@ pub(crate) fn flash_worker(
     // previously-active `_b` on the next reset
     // and the freshly-written `_a` firmware
     // would never run.
+    phases.mark_writes_started();
     if let Err(e) = session.set_active_slot_a(&mut log) {
         return Err(tr_args!(
             "err_flash_set_bootable_lun_failed",
@@ -1744,97 +1755,12 @@ fn xiaoxin_rollback_decision(
     }
 }
 
-/// Pinned gbl_root_baldur release used for TB323FU efisp GBL images.
-const EFISP_GBL_RELEASE_TAG: &str = "5.3.120-mod5";
-
-/// Exact asset names accepted for the pinned efisp release.
-const EFISP_EXPECTED_ASSETS: &[(&str, &str)] = &[
-    (
-        "generic_superfastboot_prc.efi",
-        "22471c543e13a433cb05c5c54bcfaf107f2643a6cfd7e46d8d73764b349e8cf2",
-    ),
-    (
-        "generic_superfastboot_prc_arb.efi",
-        "fc55e6a4912f20c1bf0c664bb985e10d0c4e0944f92fab5e4f855b22e2aefcdf",
-    ),
-    (
-        "generic_superfastboot_row.efi",
-        "90b16cacc4f2f6aded2c5bf0eed7d20b6a294115f6cf09dab555b4a4496e2628",
-    ),
-    (
-        "generic_superfastboot_row_arb.efi",
-        "99b62f4aeca619df4f480f6bffa3f0fea3ef2516a8fe48a092613c2aa68d10e2",
-    ),
-];
-
-/// Map a region/ARB suffix to the exact pinned asset name for the
-/// `5.3.120-mod5` gbl_root_baldur release. Unknown suffixes refuse.
-fn efisp_expected_asset(suffix: &str) -> Option<&'static str> {
-    match suffix {
-        "_prc.efi" => Some("generic_superfastboot_prc.efi"),
-        "_prc_arb.efi" => Some("generic_superfastboot_prc_arb.efi"),
-        "_row.efi" => Some("generic_superfastboot_row.efi"),
-        "_row_arb.efi" => Some("generic_superfastboot_row_arb.efi"),
-        _ => None,
-    }
-}
-
-/// SHA-256 hex for a pinned efisp asset name. Unknown names refuse.
-fn efisp_expected_sha256(asset_name: &str) -> Option<&'static str> {
-    EFISP_EXPECTED_ASSETS
-        .iter()
-        .find(|(name, _)| *name == asset_name)
-        .map(|(_, hash)| *hash)
-}
-
-fn sha256_hex_file(path: &std::path::Path) -> Result<String, String> {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-
-    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf).map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
-}
-
-/// Verify a downloaded efisp EFI against the pinned name → SHA-256 map.
-/// Unknown names and hash mismatches both refuse.
-fn verify_efisp_asset(path: &std::path::Path, asset_name: &str) -> Result<(), String> {
-    let expected = efisp_expected_sha256(asset_name).ok_or_else(|| {
-        tr_args!(
-            "err_flash_efisp_asset_unknown",
-            asset = asset_name,
-            tag = EFISP_GBL_RELEASE_TAG
-        )
-    })?;
-    let actual = sha256_hex_file(path)?;
-    if actual != expected {
-        return Err(tr_args!(
-            "err_flash_efisp_hash_mismatch",
-            asset = asset_name,
-            expected = expected,
-            actual = actual
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        EFISP_EXPECTED_ASSETS, EFISP_GBL_RELEASE_TAG, XiaoxinRollbackDecision,
-        efisp_expected_asset, efisp_expected_sha256, verify_efisp_asset, xiaoxin_rollback_decision,
+    use super::{XiaoxinRollbackDecision, xiaoxin_rollback_decision};
+    use crate::arb_overlay::{
+        EFISP_EXPECTED_ASSETS, EFISP_GBL_RELEASE_TAG, efisp_expected_asset, efisp_expected_sha256,
+        verify_efisp_asset,
     };
 
     #[test]
@@ -1896,18 +1822,6 @@ mod tests {
             assert_eq!(efisp_expected_sha256(name), Some(*hash));
         }
         assert_eq!(efisp_expected_sha256("unknown.efi"), None);
-    }
-
-    #[test]
-    fn sha256_hex_file_matches_known_digest() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("abc.bin");
-        std::fs::write(&path, b"abc").expect("write");
-        // FIPS 180-2 SHA-256("abc")
-        assert_eq!(
-            super::sha256_hex_file(&path).expect("hash"),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
     }
 
     #[test]

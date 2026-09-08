@@ -59,6 +59,9 @@ impl App {
             layers.push(self.error_banner(err));
         }
         let dialog_layer_start = layers.len();
+        if self.software_fix.confirm_open {
+            layers.push(self.software_fix_confirm_dialog());
+        }
         if self.country_popup_open {
             layers.push(self.country_popup_view());
         }
@@ -702,12 +705,12 @@ impl App {
 
     pub(crate) fn status_bar(&self) -> Element<'_, Message> {
         let p = self.pal();
-        let status_color = self.connection.color(&p);
-        let status_label = self.t(self.connection.label_key());
-        let model_text = if self.device_model.is_empty() {
+        let status_color = self.device.connection.color(&p);
+        let status_label = self.t(self.connection_label_key());
+        let model_text = if self.device.model.is_empty() {
             ""
         } else {
-            &self.device_model
+            &self.device.model
         };
         let mut status_row = row![
             text(format!("●  {status_label}"))
@@ -721,7 +724,7 @@ impl App {
                 status_row.push(text(format!("— {model_text}")).size(12).style(muted_style));
         }
         status_row = status_row.push(Space::new().width(Length::Fill));
-        if self.busy {
+        if self.operation.is_running() {
             status_row = status_row.push(
                 text(self.t("status_working").to_string())
                     .size(12)

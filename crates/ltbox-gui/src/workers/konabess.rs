@@ -18,7 +18,8 @@ pub(crate) struct KonaBessInspectionResult {
 
 struct InspectionPaths {
     work_dir: PathBuf,
-    backup_dir: PathBuf,
+    backup_root: Option<PathBuf>,
+    device_model: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,8 +28,14 @@ enum ExploitGateKind {
     Tb323fuEfisp,
 }
 
-const fn exploit_gate_kind(is_tb323fu: bool) -> ExploitGateKind {
-    if is_tb323fu {
+fn exploit_gate_kind(
+    image_capabilities: Option<&ltbox_core::model::ModelCapabilities>,
+    fallback_uses_gbl: bool,
+) -> ExploitGateKind {
+    let uses_gbl = image_capabilities
+        .map(|capabilities| capabilities.root_uses_gbl)
+        .unwrap_or(fallback_uses_gbl);
+    if uses_gbl {
         ExploitGateKind::Tb323fuEfisp
     } else {
         ExploitGateKind::SignedVbmeta
@@ -64,8 +71,9 @@ trait KonaBessInspectionBackend {
 struct DeviceBackend<'a> {
     conn: ConnectionStatus,
     loader: &'a Path,
-    is_tb323fu: bool,
+    uses_gbl: bool,
     device_model: &'a str,
+    phases: &'a PhaseReporter,
     session: Option<ltbox_device::edl::EdlSession>,
     writes_started: bool,
 }
@@ -128,20 +136,22 @@ impl KonaBessInspectionBackend for DeviceBackend<'_> {
         work_dir: &Path,
         log: &mut Vec<String>,
     ) -> Result<(), String> {
-        let detected_xiaoxin = ltbox_patch::avb::extract_image_avb_info(vendor_boot)
+        let fingerprint = ltbox_patch::avb::extract_image_avb_info(vendor_boot)
             .ok()
-            .and_then(|info| ltbox_patch::avb::build_fingerprint(&info))
-            .is_some_and(|fingerprint| {
-                // Bidirectional SKU equivalence makes the TB376FC token match TB390FU too.
-                ltbox_core::model::fingerprint_model_match(
-                    &fingerprint,
-                    ltbox_core::model::TB376FC_MODEL,
-                )
-            });
-        if ltbox_core::model::is_xiaoxin_pro13_model(self.device_model) || detected_xiaoxin {
+            .and_then(|info| ltbox_patch::avb::build_fingerprint(&info));
+        let image_capabilities = fingerprint.as_deref().and_then(|fp| {
+            let mut profiles = ltbox_core::model::fingerprint_capabilities(fp);
+            let first = profiles.next();
+            profiles.find(|p| p.root_uses_gbl).or(first)
+        });
+        if !ltbox_core::model::capabilities(self.device_model).konabess
+            || fingerprint.as_deref().is_some_and(|fp| {
+                ltbox_core::model::fingerprint_capabilities(fp).any(|p| !p.konabess)
+            })
+        {
             return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
         }
-        match exploit_gate_kind(self.is_tb323fu) {
+        match exploit_gate_kind(image_capabilities, self.uses_gbl) {
             ExploitGateKind::Tb323fuEfisp => {
                 let efi_dir = work_dir.join("efisp_gbl");
                 let staged = prepare_tb323fu_efisp(
@@ -153,6 +163,9 @@ impl KonaBessInspectionBackend for DeviceBackend<'_> {
                     log,
                 )?;
                 self.writes_started = staged.is_some();
+                if self.writes_started {
+                    self.phases.mark_writes_started();
+                }
                 provision_tb323fu_efisp(self.session()?, staged.as_deref(), log)?;
                 Ok(())
             }
@@ -200,16 +213,16 @@ fn validate_signing_key(pubkey_sha1: Option<&str>) -> Result<(), String> {
 }
 
 fn persist_backup(vendor_boot: &Path, vbmeta: &Path, backup_dir: &Path) -> Result<(), String> {
-    if let Err(error) = (|| -> std::io::Result<()> {
-        std::fs::create_dir_all(backup_dir)?;
-        std::fs::copy(vendor_boot, backup_dir.join("vendor_boot.img"))?;
-        std::fs::copy(vbmeta, backup_dir.join("vbmeta.img"))?;
-        Ok(())
-    })() {
-        let _ = std::fs::remove_dir_all(backup_dir);
-        return Err(error.to_string());
-    }
+    std::fs::copy(vendor_boot, backup_dir.join("vendor_boot.img"))
+        .map_err(|error| error.to_string())?;
+    std::fs::copy(vbmeta, backup_dir.join("vbmeta.img")).map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn backup_fingerprint(vendor_boot: &Path) -> Option<String> {
+    ltbox_patch::avb::extract_image_avb_info(vendor_boot)
+        .ok()
+        .and_then(|info| ltbox_patch::avb::build_fingerprint(&info))
 }
 
 fn execute_inspection<B: KonaBessInspectionBackend>(
@@ -247,14 +260,28 @@ fn execute_inspection<B: KonaBessInspectionBackend>(
     // Return Firehose to Sahara so part 2 can open a fresh session after the
     // UI selection pause. Backup creation is last, making it success-only.
     backend.prepare_for_selection(log)?;
-    persist_backup(&vendor_boot, &vbmeta, &paths.backup_dir)?;
+    let backup_dir = paths.backup_root.as_deref().map_or_else(
+        || crate::backup::create_backup_dir("konabess", &paths.device_model),
+        |root| crate::backup::create_backup_dir_in(root, "konabess", &paths.device_model),
+    )?;
+    persist_backup(&vendor_boot, &vbmeta, &backup_dir)?;
+    let fingerprint = backup_fingerprint(&backup_dir.join("vendor_boot.img"));
+    if let Err(error) = crate::backup::write_backup_manifest(
+        &backup_dir,
+        "konabess",
+        &paths.device_model,
+        fingerprint.as_deref(),
+        Some(&slot_suffix),
+    ) {
+        live!(log, "[KonaBess] backup metadata unavailable: {error}");
+    }
 
     Ok((
         KonaBessPrepared {
             work_dir: paths.work_dir.clone(),
             vendor_boot,
             vbmeta,
-            backup_dir: paths.backup_dir.clone(),
+            backup_dir,
             slot_suffix,
             probable_dtb_index,
         },
@@ -265,32 +292,29 @@ fn execute_inspection<B: KonaBessInspectionBackend>(
 pub(crate) fn konabess_inspection_worker(
     conn: ConnectionStatus,
     loader: PathBuf,
-    is_tb323fu: bool,
+    uses_gbl: bool,
     device_model: String,
     ll: LiveLabels,
     phases: PhaseReporter,
 ) -> Result<KonaBessInspectionResult, String> {
     let mut log = Vec::new();
-    if ltbox_core::model::is_xiaoxin_pro13_model(&device_model) {
+    if !ltbox_core::model::capabilities(&device_model).konabess {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
     let work_dir = ltbox_core::app_paths::work_dir_for("konabess");
     let _ = std::fs::remove_dir_all(&work_dir);
     std::fs::create_dir_all(&work_dir).map_err(|error| error.to_string())?;
-    // Stable name rather than the timestamped `backup_critical_<ts>` the
-    // firmware flashes use: this flow backs up the same two images every
-    // run, so a fresh folder per attempt only accumulates near-identical
-    // copies of stock vendor_boot and vbmeta.
-    let backup_dir = ltbox_core::app_paths::backup_dir_for("backup_konabess");
     let paths = InspectionPaths {
         work_dir: work_dir.clone(),
-        backup_dir,
+        backup_root: None,
+        device_model: device_model.clone(),
     };
     let mut backend = DeviceBackend {
         conn,
         loader: &loader,
-        is_tb323fu,
+        uses_gbl,
         device_model: &device_model,
+        phases: &phases,
         session: None,
         writes_started: false,
     };
@@ -327,9 +351,7 @@ trait KonaBessFlashBackend {
         &mut self,
         firmware_dir: &Path,
         output_dir: &Path,
-        target_index: usize,
-        chip: &str,
-        table: &GpuTable,
+        edit: KonaBessTableEdit<'_>,
         on_stage: &mut dyn FnMut(KonaBessBuildStage),
     ) -> Result<KonaBessAvbOutput, String>;
     fn open_session(&mut self, log: &mut Vec<String>) -> Result<(), String>;
@@ -367,17 +389,16 @@ impl KonaBessFlashBackend for FlashDeviceBackend<'_> {
         &mut self,
         firmware_dir: &Path,
         output_dir: &Path,
-        target_index: usize,
-        chip: &str,
-        table: &GpuTable,
+        edit: KonaBessTableEdit<'_>,
         on_stage: &mut dyn FnMut(KonaBessBuildStage),
     ) -> Result<KonaBessAvbOutput, String> {
         ltbox_patch::konabess::build_konabess_avb_images_from_table_with_progress(
             firmware_dir,
             output_dir,
-            target_index,
-            chip,
-            table,
+            edit.target_index,
+            edit.chip,
+            edit.table,
+            edit.gbl_verified,
             on_stage,
         )
         .map_err(|error| error.to_string())
@@ -437,6 +458,10 @@ struct KonaBessTableEdit<'a> {
     target_index: usize,
     chip: &'a str,
     table: &'a GpuTable,
+    /// Boot chain verified by the GBL EFI on `efisp` rather than by AVB, read
+    /// from the dumped image the way the root pipeline reads it. The AVB
+    /// rebuild is skipped, so a Lenovo-key vbmeta no longer stops the run.
+    gbl_verified: bool,
 }
 
 fn execute_flash<B: KonaBessFlashBackend>(
@@ -444,24 +469,16 @@ fn execute_flash<B: KonaBessFlashBackend>(
     prepared: &KonaBessPrepared,
     edit: KonaBessTableEdit<'_>,
     phases: &PhaseReporter,
-    ll: &LiveLabels,
     log: &mut Vec<String>,
 ) -> Result<(), String> {
     let output_dir = prepared.work_dir.join("rebuilt");
-    let output = backend.build_pair(
-        &prepared.work_dir,
-        &output_dir,
-        edit.target_index,
-        edit.chip,
-        edit.table,
-        &mut |stage| {
-            live!(
-                log,
-                "[KonaBess] {}",
-                phases.marker(crate::konabess_build_phase(stage))
-            );
-        },
-    )?;
+    let output = backend.build_pair(&prepared.work_dir, &output_dir, edit, &mut |stage| {
+        live!(
+            log,
+            "[KonaBess] {}",
+            phases.marker(crate::konabess_build_phase(stage))
+        );
+    })?;
 
     let vendor_boot_partition = format!("vendor_boot{}", prepared.slot_suffix);
     let vbmeta_partition = format!("vbmeta{}", prepared.slot_suffix);
@@ -482,19 +499,30 @@ fn execute_flash<B: KonaBessFlashBackend>(
 
     live!(log, "[KonaBess] {}", phases.marker(6));
     backend.open_session(log)?;
+    phases.mark_writes_started();
     backend.flash_partition(
         &vendor_boot_partition,
         &output.vendor_boot,
         vendor_boot_lun,
         log,
     )?;
-    backend.flash_partition(&vbmeta_partition, &output.vbmeta, vbmeta_lun, log)?;
+    // Absent on a GBL-verified device: the AVB chain was never rebuilt, so
+    // there is nothing to pair with the vendor_boot write.
+    if let Some(vbmeta) = output.vbmeta.as_deref() {
+        phases.mark_writes_started();
+        backend.flash_partition(&vbmeta_partition, vbmeta, vbmeta_lun, log)?;
+    }
 
     // The reset is deliberately unreachable until both members of the
     // AVB-matched pair have completed in this same backend session.
     live!(log, "[KonaBess] {}", phases.marker(7));
     backend.reboot(log);
-    live!(log, "[KonaBess] {}", ll.flash_completed);
+    // Not the firmware label: this run wrote vendor_boot and vbmeta.
+    live!(
+        log,
+        "[KonaBess] {}",
+        ltbox_core::i18n::tr("live_image_flash_completed")
+    );
     Ok(())
 }
 
@@ -503,10 +531,9 @@ fn run_flash<B: KonaBessFlashBackend>(
     prepared: &KonaBessPrepared,
     edit: KonaBessTableEdit<'_>,
     phases: &PhaseReporter,
-    ll: &LiveLabels,
     log: &mut Vec<String>,
 ) -> Result<(), String> {
-    match execute_flash(backend, prepared, edit, phases, ll, log) {
+    match execute_flash(backend, prepared, edit, phases, log) {
         Ok(()) => Ok(()),
         Err(error) if backend.writes_started() => {
             // Never reset a device that may contain only one member of the
@@ -529,23 +556,23 @@ pub(crate) fn konabess_flash_worker(
     target_index: usize,
     chip: String,
     table: GpuTable,
-    ll: LiveLabels,
     phases: PhaseReporter,
 ) -> Result<Vec<String>, String> {
     let mut log = Vec::new();
-    let prepared_xiaoxin = ltbox_patch::avb::extract_image_avb_info(&prepared.vendor_boot)
+    let prepared_fingerprint = ltbox_patch::avb::extract_image_avb_info(&prepared.vendor_boot)
         .ok()
-        .and_then(|info| ltbox_patch::avb::build_fingerprint(&info))
-        .is_some_and(|fingerprint| {
-            // Bidirectional SKU equivalence makes the TB376FC token match TB390FU too.
-            ltbox_core::model::fingerprint_model_match(
-                &fingerprint,
-                ltbox_core::model::TB376FC_MODEL,
-            )
-        });
-    if prepared_xiaoxin {
+        .and_then(|info| ltbox_patch::avb::build_fingerprint(&info));
+    if prepared_fingerprint
+        .as_deref()
+        .is_some_and(|fp| ltbox_core::model::fingerprint_capabilities(fp).any(|p| !p.konabess))
+    {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
+    // Read from the dumped image, not the connection: EDL reports no model, and
+    // this decides whether the AVB chain is rebuilt at all.
+    let gbl_verified = prepared_fingerprint
+        .as_deref()
+        .is_some_and(|fp| ltbox_core::model::fingerprint_capabilities(fp).any(|p| p.root_uses_gbl));
     let mut backend = FlashDeviceBackend {
         loader: &loader,
         session: None,
@@ -558,9 +585,9 @@ pub(crate) fn konabess_flash_worker(
             target_index,
             chip: &chip,
             table: &table,
+            gbl_verified,
         },
         &phases,
-        &ll,
         &mut log,
     )?;
     Ok(log)
@@ -682,11 +709,14 @@ mod tests {
             &mut self,
             firmware_dir: &Path,
             output_dir: &Path,
-            target_index: usize,
-            _chip: &str,
-            _table: &GpuTable,
+            edit: KonaBessTableEdit<'_>,
             on_stage: &mut dyn FnMut(KonaBessBuildStage),
         ) -> Result<KonaBessAvbOutput, String> {
+            let KonaBessTableEdit {
+                target_index,
+                gbl_verified,
+                ..
+            } = edit;
             self.events.push(format!("build:{target_index}"));
             if let Some(error) = self.build_error.take() {
                 return Err(error);
@@ -697,7 +727,7 @@ mod tests {
             on_stage(KonaBessBuildStage::RebuildVbmeta);
             Ok(KonaBessAvbOutput {
                 vendor_boot: output_dir.join("vendor_boot.img"),
-                vbmeta: output_dir.join("vbmeta.img"),
+                vbmeta: (!gbl_verified).then(|| output_dir.join("vbmeta.img")),
                 target_index,
             })
         }
@@ -762,7 +792,8 @@ mod tests {
         std::fs::create_dir_all(&work_dir).unwrap();
         InspectionPaths {
             work_dir,
-            backup_dir: root.join("backup_konabess"),
+            backup_root: Some(root.join("backups")),
+            device_model: "test-model".into(),
         }
     }
 
@@ -779,19 +810,6 @@ mod tests {
             .map(str::to_owned)
             .collect(),
         )
-    }
-
-    fn live_labels() -> LiveLabels {
-        LiveLabels {
-            closing_dump: "closing".into(),
-            flash_completed: "completed".into(),
-            root_completed: "root completed".into(),
-            unroot_completed: "unroot completed".into(),
-            adb_no_kver: "no kernel version".into(),
-            backup_saved_prefix: "backup".into(),
-            root_resolved_prefix: "resolved".into(),
-            root_backup_copy_prefix: "backup copy".into(),
-        }
     }
 
     fn prepared(root: &Path) -> KonaBessPrepared {
@@ -817,11 +835,37 @@ mod tests {
 
     #[test]
     fn tb323fu_empty_efisp_requires_provision_and_bypasses_avb_gate() {
-        assert_eq!(exploit_gate_kind(true), ExploitGateKind::Tb323fuEfisp);
-        assert_eq!(exploit_gate_kind(false), ExploitGateKind::SignedVbmeta);
+        assert_eq!(exploit_gate_kind(None, true), ExploitGateKind::Tb323fuEfisp);
+        assert_eq!(
+            exploit_gate_kind(None, false),
+            ExploitGateKind::SignedVbmeta
+        );
         assert!(crate::efisp_is_empty(&[0; 32]));
         assert!(!crate::efisp_is_empty(&[0, 0, 1, 0]));
         assert!(validate_signing_key(Some("fixed-or-unknown")).is_err());
+    }
+
+    #[test]
+    fn inspected_image_overrides_stale_exploit_route() {
+        let tb323fu = ltbox_core::model::capabilities_from_fingerprint(
+            "qti/TB323FU/TB323FU:15/build:user/release-keys",
+        );
+        assert_eq!(
+            exploit_gate_kind(tb323fu, false),
+            ExploitGateKind::Tb323fuEfisp
+        );
+        let tb320fc = ltbox_core::model::capabilities_from_fingerprint(
+            "qti/LAVIETab9QHD1/LAVIETab9QHD1:15/build:user/release-keys",
+        );
+        assert_eq!(
+            exploit_gate_kind(tb320fc, true),
+            ExploitGateKind::SignedVbmeta
+        );
+        let unknown = ltbox_core::model::capabilities_from_fingerprint("qti/unknown/build");
+        assert_eq!(
+            exploit_gate_kind(unknown, true),
+            ExploitGateKind::Tb323fuEfisp
+        );
     }
 
     #[test]
@@ -850,8 +894,49 @@ mod tests {
                 "pause"
             ]
         );
-        assert!(paths.backup_dir.join("vendor_boot.img").is_file());
-        assert!(paths.backup_dir.join("vbmeta.img").is_file());
+        let backup_root = paths.backup_root.as_ref().unwrap();
+        let backup_dir = std::fs::read_dir(backup_root.join("konabess"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .next()
+            .unwrap();
+        assert!(backup_dir.join("vendor_boot.img").is_file());
+        assert!(backup_dir.join("vbmeta.img").is_file());
+    }
+
+    #[test]
+    fn a_gbl_verified_device_flashes_vendor_boot_without_a_vbmeta_pair() {
+        // TB323FU verifies through the GBL on `efisp`, so nothing rebuilds the
+        // AVB chain — the vbmeta whose Lenovo key cannot be re-signed is never
+        // produced, and never flashed.
+        let root = tempfile::tempdir().unwrap();
+        let mut backend = FakeFlashBackend::default();
+        let result = execute_flash(
+            &mut backend,
+            &prepared(root.path()),
+            KonaBessTableEdit {
+                gbl_verified: true,
+                target_index: 3,
+                chip: "waipio",
+                table: &table(),
+            },
+            &flash_phases(),
+            &mut Vec::new(),
+        );
+        assert!(result.is_ok(), "{result:?}");
+        assert!(
+            backend
+                .events
+                .iter()
+                .any(|e| e.starts_with("flash:vendor_boot")),
+            "{:?}",
+            backend.events
+        );
+        assert!(
+            !backend.events.iter().any(|e| e.starts_with("flash:vbmeta")),
+            "{:?}",
+            backend.events
+        );
     }
 
     #[test]
@@ -866,8 +951,61 @@ mod tests {
         let result = execute_inspection(&mut backend, &paths, &phases(), &mut Vec::new());
 
         assert_eq!(result.unwrap_err(), "blocked");
-        assert!(!paths.backup_dir.exists());
+        assert!(!paths.backup_root.as_ref().unwrap().exists());
         assert!(!backend.events.iter().any(|event| event == "classify"));
+    }
+
+    #[test]
+    fn repeated_inspection_runs_create_distinct_backups() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = test_paths(root.path());
+
+        let mut first_backend = FakeBackend {
+            candidate: Some(candidate()),
+            ..FakeBackend::default()
+        };
+        let (first, _) =
+            execute_inspection(&mut first_backend, &paths, &phases(), &mut Vec::new()).unwrap();
+        let first_vendor = std::fs::read(first.backup_dir.join("vendor_boot.img")).unwrap();
+
+        let mut second_backend = FakeBackend::default();
+        let (second, _) =
+            execute_inspection(&mut second_backend, &paths, &phases(), &mut Vec::new()).unwrap();
+
+        assert_ne!(first.backup_dir, second.backup_dir);
+        assert_eq!(
+            std::fs::read(first.backup_dir.join("vendor_boot.img")).unwrap(),
+            first_vendor
+        );
+        assert!(second.backup_dir.join("vendor_boot.img").is_file());
+    }
+
+    #[test]
+    fn failed_backup_copy_preserves_previous_run_and_partial_dump() {
+        let root = tempfile::tempdir().unwrap();
+        let vendor = root.path().join("vendor_boot.img");
+        let vbmeta = root.path().join("vbmeta.img");
+        std::fs::write(&vendor, b"original vendor").unwrap();
+        std::fs::write(&vbmeta, b"original vbmeta").unwrap();
+        let first =
+            crate::backup::create_backup_dir_in(root.path(), "konabess", "TB322FC").unwrap();
+        persist_backup(&vendor, &vbmeta, &first).unwrap();
+        let second =
+            crate::backup::create_backup_dir_in(root.path(), "konabess", "TB322FC").unwrap();
+        std::fs::write(&vendor, b"modified vendor").unwrap();
+        assert!(persist_backup(&vendor, &root.path().join("missing.img"), &second).is_err());
+        assert_eq!(
+            std::fs::read(first.join("vendor_boot.img")).unwrap(),
+            b"original vendor"
+        );
+        assert_eq!(
+            std::fs::read(first.join("vbmeta.img")).unwrap(),
+            b"original vbmeta"
+        );
+        assert_eq!(
+            std::fs::read(second.join("vendor_boot.img")).unwrap(),
+            b"modified vendor"
+        );
     }
 
     #[test]
@@ -879,12 +1017,12 @@ mod tests {
             &mut backend,
             &prepared(root.path()),
             KonaBessTableEdit {
+                gbl_verified: false,
                 target_index: 9,
                 chip: "waipio",
                 table: &table(),
             },
             &flash_phases(),
-            &live_labels(),
             &mut Vec::new(),
         )
         .unwrap();
@@ -921,12 +1059,12 @@ mod tests {
             &mut backend,
             &prepared(root.path()),
             KonaBessTableEdit {
+                gbl_verified: false,
                 target_index: 3,
                 chip: "waipio",
                 table: &table(),
             },
             &flash_phases(),
-            &live_labels(),
             &mut Vec::new(),
         )
         .unwrap_err();
@@ -948,12 +1086,12 @@ mod tests {
             &mut backend,
             &prepared(root.path()),
             KonaBessTableEdit {
+                gbl_verified: false,
                 target_index: 5,
                 chip: "waipio",
                 table: &table(),
             },
             &flash_phases(),
-            &live_labels(),
             &mut Vec::new(),
         )
         .unwrap_err();

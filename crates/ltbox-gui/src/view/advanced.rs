@@ -128,7 +128,7 @@ impl App {
             let needs_device = matches!(self.adv_wizard.action, Some(AdvAction::DetectArb));
             let needs_system =
                 is_start && matches!(self.adv_wizard.action, Some(AdvAction::PatchDevinfo));
-            let system_ok = self.connection == ConnectionStatus::Adb;
+            let system_ok = self.device.connection == ConnectionStatus::Adb;
             // Change Country's picked loader must still fit the connected model at
             // Start (the device may have been swapped after the loader was picked).
             let loader_ok = !needs_system
@@ -146,7 +146,7 @@ impl App {
                 }
             } else {
                 self.adv_wizard.can_next()
-            }) && !self.busy
+            }) && !self.operation.is_running()
                 && (!is_start || !needs_device || self.device_reachable())
                 && (!needs_system || system_ok)
                 && loader_ok;
@@ -754,7 +754,7 @@ impl App {
             .align_y(iced::Alignment::Center)
             .height(Length::Fill);
 
-        if !self.busy {
+        if !self.operation.is_running() {
             actions = actions.push(wizard_primary_extended_fab(
                 icon::fab_start_over(),
                 self.t("btn_start_over").to_string(),
@@ -802,7 +802,7 @@ impl App {
                 self.t("btn_next").to_string()
             };
             let can = self.simple_flash.can_next()
-                && !(self.busy && is_start)
+                && !(self.operation.is_running() && is_start)
                 && (!is_start || self.device_reachable());
             wizard_nav_generic(
                 true,

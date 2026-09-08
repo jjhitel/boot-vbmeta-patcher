@@ -27,7 +27,7 @@ impl App {
     pub(crate) fn update_root(&mut self, msg: RootMsg) -> Task<Message> {
         match msg {
             RootMsg::RootFamily(f) => {
-                if self.is_xiaoxin_pro13() {
+                if !ltbox_core::model::capabilities(&self.device.model).root {
                     return Task::none();
                 }
                 self.root.family = Some(f);
@@ -58,13 +58,16 @@ impl App {
                 Task::none()
             }
             RootMsg::RootMode(m) => {
-                if self.is_xiaoxin_pro13() {
+                if !ltbox_core::model::capabilities(&self.device.model).root {
                     return Task::none();
                 }
-                // TODO(root): LTBox currently only swaps the boot.img Image
-                // for GKI, which corrupts boot on TB323FU. Keep it disabled
-                // until vbmeta handling is added.
-                if self.is_tb323fu() && m == RootMode::Gki {
+                // TODO(root): Direct GKI installation from stock has a reported
+                // TB323FU boot failure. Offline repack parity alone does not
+                // establish the required GBL/init_boot state; keep this gated
+                // until the device installation path is verified.
+                if !ltbox_core::model::capabilities(&self.device.model).gki_root
+                    && m == RootMode::Gki
+                {
                     return Task::none();
                 }
                 self.root.mode = Some(m);
@@ -121,18 +124,16 @@ impl App {
             }
             RootMsg::RootSelectFolder => {
                 // Historical field name; value is now a single EDL loader file.
-                if let Some(path) = self.resolved_default_loader() {
-                    // A fitting Settings default loader bypasses the picker; a
-                    // model-mismatched (or missing) one falls through to it.
-                    self.root.folder_path = Some(path);
-                    return Task::none();
-                }
-                self.picker_target = PickerTarget::RootLoader;
-                pickers::pick_file_for(
-                    loader_file_spec(),
-                    &self.recent_paths,
-                    Message::FileSelected,
-                )
+                // A fitting Settings default loader bypasses the picker; a
+                // model-mismatched (or missing) one falls through to it.
+                self.pick_loader_with_default(|__v| Message::Root(RootMsg::RootLoaderChosen(__v)))
+            }
+            RootMsg::RootLoaderChosen(path) => {
+                self.apply_loader_pick(path, |app, loader, err| {
+                    app.root.folder_path = loader;
+                    app.error_msg = err;
+                });
+                Task::none()
             }
             RootMsg::RootNext => {
                 if self.root.step == 6 {
@@ -144,7 +145,7 @@ impl App {
                         // over a different live operation. Use silent busy
                         // (empty `op_steps`) so the probe is distinguishable
                         // from a phased Root exec that already owns `busy`.
-                        if self.busy {
+                        if self.operation.is_running() {
                             return Task::none();
                         }
                         self.begin_silent_op(View::Root);
@@ -168,7 +169,7 @@ impl App {
                             |_e| None,
                         );
                     }
-                    if self.busy {
+                    if self.operation.is_running() {
                         return Task::none();
                     }
                     self.root.next();
@@ -342,8 +343,9 @@ impl App {
                 // Root busy reservation. A phased Root exec (non-empty
                 // `op_steps`), a cleared busy flag, or a different
                 // `busy_view` means the result is stale — never auto-launch.
-                let probe_still_ours =
-                    self.busy && self.busy_view == Some(View::Root) && self.op_steps.is_empty();
+                let probe_still_ours = self.operation.is_running()
+                    && self.operation.view() == Some(View::Root)
+                    && self.operation.steps.is_empty();
                 if !probe_still_ours {
                     return Task::none();
                 }
@@ -373,20 +375,20 @@ impl App {
                 // Refuse to start while any busy op is live (including a
                 // still-held KSU probe reservation). Callers that own the
                 // probe path release it before re-entering here.
-                if self.busy {
+                if self.operation.is_running() {
                     return Task::none();
                 }
-                if self.is_xiaoxin_pro13() {
+                if !ltbox_core::model::capabilities(&self.device.model).root {
                     self.error_msg =
                         Some(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
                     return Task::none();
                 }
-                // TODO(root): LTBox currently only swaps the boot.img Image
-                // for GKI, which corrupts boot on TB323FU. The mode card is
-                // disabled, but stale selections can survive from before the
-                // model was identified; refuse them until vbmeta handling is
-                // added.
-                if self.is_tb323fu() && self.root.is_gki() {
+                // Direct GKI installation on TB323FU still needs device
+                // verification. Reject stale selections made before the model
+                // was identified, as well as disabling the mode card.
+                if !ltbox_core::model::capabilities(&self.device.model).gki_root
+                    && self.root.is_gki()
+                {
                     self.root.mode = None;
                     self.root.step = 1; // Mode step
                     self.error_msg = Some(tr_args!("model_unsupported", model = "TB323FU"));
@@ -406,8 +408,8 @@ impl App {
                 let version = self.root.version;
                 let file_path = self.root.file_path.clone();
                 let gui_kernel_version = self.root.kernel_version.clone();
-                let device_model = self.device_model.clone();
-                let conn = self.connection;
+                let device_model = self.device.model.clone();
+                let conn = self.device.connection;
                 // Folder must contain `xbl_s_devprg_ns.melf`; optional
                 // `keys/testkey_rsa{2048,4096}.pem` as KEY_MAP fallback.
                 let fw_folder = self.root.folder_path.clone();
@@ -436,7 +438,7 @@ impl App {
                 // on userdata otherwise and boot-loop after first wipe.
                 let preinit_device: String = if matches!(family, Some(Family::Magisk))
                     && matches!(
-                        self.connection,
+                        self.device.connection,
                         ConnectionStatus::Adb | ConnectionStatus::AdbRecovery
                     ) {
                     let (mountinfo, encrypt_type) = if let Some(mut adb) =
@@ -535,6 +537,43 @@ impl App {
 mod tests {
     use crate::*;
 
+    #[test]
+    fn unsupported_model_messages_cannot_start_operations() {
+        for model in ["TB376FC", "TB390FU"] {
+            let mut app = App::default();
+            app.device.model = model.into();
+            let _ = app.update_root(RootMsg::RootFamily(Family::Magisk));
+            assert!(app.root.family.is_none());
+            let _ = app.update_root(RootMsg::RootExecStart);
+            assert!(!app.operation.is_running());
+            assert_eq!(
+                app.error_msg,
+                Some(tr_args!("model_unsupported", model = "TB376FC / TB390FU"))
+            );
+            app.error_msg = None;
+            let _ = app.update_unroot(UnrootMsg::UnrootExecStart);
+            assert!(!app.operation.is_running());
+            assert!(app.error_msg.is_some());
+            app.error_msg = None;
+            let _ = app.update_konabess(KonaBessMsg::KonaBessNext);
+            assert!(!app.operation.is_running());
+            assert_eq!(app.konabess.step, 0);
+            assert!(app.error_msg.is_some());
+        }
+        let mut app = App::default();
+        app.device.model = "TB323FU".into();
+        let _ = app.update_root(RootMsg::RootMode(RootMode::Gki));
+        assert!(app.root.mode.is_none());
+        app.root.mode = Some(RootMode::Gki);
+        let _ = app.update_root(RootMsg::RootExecStart);
+        assert!(!app.operation.is_running());
+        assert!(app.root.mode.is_none());
+        assert_eq!(
+            app.error_msg,
+            Some(tr_args!("model_unsupported", model = "TB323FU"))
+        );
+    }
+
     fn ksu_lkm_confirm_wizard() -> RootWizard {
         RootWizard {
             family: Some(Family::KernelSU),
@@ -552,12 +591,15 @@ mod tests {
             root: ksu_lkm_confirm_wizard(),
             ..App::default()
         };
-        assert!(!app.busy);
+        assert!(!app.operation.is_running());
         let _task = app.update_root(RootMsg::RootNext);
-        assert!(app.busy, "probe must reserve busy before blocking ADB work");
-        assert_eq!(app.busy_view, Some(View::Root));
         assert!(
-            app.op_steps.is_empty(),
+            app.operation.is_running(),
+            "probe must reserve busy before blocking ADB work"
+        );
+        assert_eq!(app.operation.view(), Some(View::Root));
+        assert!(
+            app.operation.steps.is_empty(),
             "probe uses silent busy so it stays distinct from phased root"
         );
     }
@@ -565,15 +607,14 @@ mod tests {
     #[test]
     fn root_next_skips_ksu_probe_when_already_busy() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Flash),
+            operation: OperationExecution::fixture(true, Some(View::Flash), Vec::new(), 0, None),
             root: ksu_lkm_confirm_wizard(),
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootNext);
-        assert!(app.busy);
+        assert!(app.operation.is_running());
         assert_eq!(
-            app.busy_view,
+            app.operation.view(),
             Some(View::Flash),
             "must not steal another op's busy reservation for the probe"
         );
@@ -582,13 +623,12 @@ mod tests {
     #[test]
     fn ksu_probe_done_ignores_when_busy_reservation_lost() {
         let mut app = App {
-            busy: false,
-            busy_view: None,
+            operation: OperationExecution::fixture(false, None, Vec::new(), 0, None),
             root: ksu_lkm_confirm_wizard(),
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootKernelVersionProbeDone(Some("6.1".to_string())));
-        assert!(!app.busy);
+        assert!(!app.operation.is_running());
         assert!(app.root.kernel_version.is_none());
         assert_eq!(app.root.step, 6);
         assert!(!app.root.kernel_version_popup_open);
@@ -598,16 +638,20 @@ mod tests {
     fn ksu_probe_done_ignores_phased_root_busy_overlap() {
         // A late probe callback must not clear or hijack a live phased root.
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Root),
-            op_steps: vec![
-                OpStep {
-                    label: "Patch".to_string(),
-                },
-                OpStep {
-                    label: "Flash".to_string(),
-                },
-            ],
+            operation: OperationExecution::fixture(
+                true,
+                Some(View::Root),
+                vec![
+                    OpStep {
+                        label: "Patch".to_string(),
+                    },
+                    OpStep {
+                        label: "Flash".to_string(),
+                    },
+                ],
+                0,
+                None,
+            ),
             root: {
                 let mut w = ksu_lkm_confirm_wizard();
                 w.step = 7;
@@ -617,9 +661,9 @@ mod tests {
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootKernelVersionProbeDone(Some("6.6".to_string())));
-        assert!(app.busy);
-        assert_eq!(app.busy_view, Some(View::Root));
-        assert_eq!(app.op_steps.len(), 2);
+        assert!(app.operation.is_running());
+        assert_eq!(app.operation.view(), Some(View::Root));
+        assert_eq!(app.operation.steps.len(), 2);
         assert_eq!(app.root.kernel_version.as_deref(), Some("6.1"));
         assert_eq!(app.root.step, 7);
     }
@@ -627,8 +671,7 @@ mod tests {
     #[test]
     fn ksu_probe_done_releases_busy_when_wizard_left_gate() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Root),
+            operation: OperationExecution::fixture(true, Some(View::Root), Vec::new(), 0, None),
             root: {
                 let mut w = ksu_lkm_confirm_wizard();
                 w.step = 5; // user backed out during probe
@@ -637,8 +680,8 @@ mod tests {
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootKernelVersionProbeDone(Some("6.1".to_string())));
-        assert!(!app.busy);
-        assert_eq!(app.busy_view, None);
+        assert!(!app.operation.is_running());
+        assert_eq!(app.operation.view(), None);
         assert!(app.root.kernel_version.is_none());
         assert_eq!(app.root.step, 5);
     }
@@ -646,14 +689,13 @@ mod tests {
     #[test]
     fn ksu_probe_done_opens_manual_popup_and_releases_busy() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Root),
+            operation: OperationExecution::fixture(true, Some(View::Root), Vec::new(), 0, None),
             root: ksu_lkm_confirm_wizard(),
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootKernelVersionProbeDone(None));
-        assert!(!app.busy);
-        assert_eq!(app.busy_view, None);
+        assert!(!app.operation.is_running());
+        assert_eq!(app.operation.view(), None);
         assert!(app.root.kernel_version_popup_open);
         assert!(app.root.kernel_version.is_none());
         assert_eq!(app.root.step, 6);
@@ -664,8 +706,7 @@ mod tests {
         // Missing loader makes RootExecStart fail before begin_phased_op —
         // proves the probe reservation is released and no nested busy remains.
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Root),
+            operation: OperationExecution::fixture(true, Some(View::Root), Vec::new(), 0, None),
             root: {
                 let mut w = ksu_lkm_confirm_wizard();
                 w.folder_path = None;
@@ -676,16 +717,15 @@ mod tests {
         let _task = app.update_root(RootMsg::RootKernelVersionProbeDone(Some("6.1".to_string())));
         assert_eq!(app.root.kernel_version.as_deref(), Some("6.1"));
         assert_eq!(app.root.step, 7);
-        assert!(!app.busy);
-        assert_eq!(app.busy_view, None);
+        assert!(!app.operation.is_running());
+        assert_eq!(app.operation.view(), None);
         assert!(app.error_msg.is_some());
     }
 
     #[test]
     fn root_exec_start_refuses_while_busy() {
         let mut app = App {
-            busy: true,
-            busy_view: Some(View::Flash),
+            operation: OperationExecution::fixture(true, Some(View::Flash), Vec::new(), 0, None),
             root: {
                 let mut w = ksu_lkm_confirm_wizard();
                 w.kernel_version = Some("6.1".to_string());
@@ -696,10 +736,10 @@ mod tests {
             ..App::default()
         };
         let _task = app.update_root(RootMsg::RootExecStart);
-        assert!(app.busy);
-        assert_eq!(app.busy_view, Some(View::Flash));
+        assert!(app.operation.is_running());
+        assert_eq!(app.operation.view(), Some(View::Flash));
         // Must not have started a root op or clobbered the foreign reservation.
-        assert!(app.op_steps.is_empty());
+        assert!(app.operation.steps.is_empty());
     }
 
     #[test]

@@ -5,9 +5,9 @@
 
 use crate::{
     ConnectionStatus, CountryPatchProgress, FirmwareIdentity, LiveLabels, PhaseReporter,
-    WorkflowConfig, active_slot_suffix, build_testkey_arb_overlays, efisp_asset_suffix,
-    find_firmware_loader, fingerprint_token_match, is_rollback_protected_model, open_edl_session,
-    read_device_rollback_index_via_edl, transition_to_edl,
+    WorkflowConfig, active_slot_suffix, build_testkey_arb_overlays, efisp_suffix_for_vendor_boot,
+    fetch_efisp_asset, find_firmware_loader, fingerprint_token_match, is_rollback_protected_model,
+    open_edl_session, read_device_rollback_index_via_edl, transition_to_edl,
 };
 use ltbox_core::{live, tr_args};
 
@@ -47,7 +47,7 @@ fn reboot_fastboot_to_system_after_pre_edl_abort(log: &mut Vec<String>, started_
             ltbox_core::live!(
                 log,
                 "[Fastboot] {}",
-                tr_args!("live_fastboot_open_failed", error = e.to_string())
+                tr_args!("err_fastboot_open_failed", error = e.to_string())
             );
         }
     }
@@ -117,9 +117,7 @@ fn manual_device_floors(
 /// model from an EDL-dumped vendor_boot when fastboot/ADB never ran.
 /// LAVIE Tab 9QHD1 is represented by TB320FC because the shared matcher treats
 /// its reported token as equivalent and the recovered value is internal only.
-const SUPPORTED_MODELS: [&str; 8] = [
-    "TB320FC", "TB321FU", "TB322FC", "TB323FU", "TB376FC", "TB390FU", "TB520FU", "TB710FU",
-];
+use ltbox_core::model::{RollbackPolicy, SUPPORTED_MODELS, capabilities, fingerprint_capabilities};
 
 fn xiaoxin_pro13_token(text: &str) -> Option<&'static str> {
     [
@@ -267,7 +265,7 @@ fn read_edl_start_device(
     );
 
     // 2. TB322FC has no rollback protection — skip the index read.
-    if model_token.eq_ignore_ascii_case("TB322FC") {
+    if !capabilities(&model_token).rollback.is_protected() {
         return Ok(EdlStartProbe {
             model_token,
             rollback_floors: None,
@@ -297,7 +295,7 @@ fn read_edl_start_device(
     }
     let Some(floors) = rollback_floors(boot_idx, vbs_idx) else {
         return Err(ltbox_core::i18n::tr(
-            if ltbox_core::model::is_xiaoxin_pro13_model(&model_token) {
+            if capabilities(&model_token).rollback == RollbackPolicy::ReadOnly {
                 "err_flash_xiaoxin_arb_floor_unreadable"
             } else {
                 "err_flash_edl_avb_invalid"
@@ -765,6 +763,8 @@ fn run_country_change(
     session: &mut ltbox_device::edl::EdlSession,
     work_dir: &std::path::Path,
     critical_backup: &std::path::Path,
+    backup_operation: &str,
+    backup_fingerprint: Option<&str>,
     device_model: &str,
     firmware_fingerprint: Option<&str>,
     target_code: Option<&str>,
@@ -880,6 +880,16 @@ fn run_country_change(
         });
     }
 
+    if let Err(error) = crate::backup::write_backup_manifest(
+        critical_backup,
+        backup_operation,
+        device_model,
+        backup_fingerprint,
+        None,
+    ) {
+        live!(log, "[Backup] Could not record manifest: {error}");
+    }
+
     if let Some(phases) = phases {
         live!(log, "[Country] {}", phases.marker(4));
     }
@@ -993,6 +1003,9 @@ fn run_country_change(
 
         // Flash once if the country code changed.
         if changed {
+            if let Some(phases) = phases {
+                phases.mark_writes_started();
+            }
             if let Err(e) = session.flash_partition(label, &patched_path, 0, lun, log) {
                 ltbox_core::live!(
                     log,

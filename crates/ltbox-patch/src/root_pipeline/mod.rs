@@ -130,7 +130,7 @@ pub fn resolve_root_image_target(
 ) -> RootImageTarget {
     if gki_mode
         || matches!(family, RootFamily::APatch | RootFamily::Skroot)
-        || ltbox_core::model::is_tb320fc_model(device_model)
+        || ltbox_core::model::capabilities(device_model).ramdisk_root_uses_boot
     {
         RootImageTarget::Boot
     } else {
@@ -157,7 +157,7 @@ pub fn resolve_root_image_target(
 pub fn root_run_rebuilds_vbmeta(target: RootImageTarget, device_model: &str) -> bool {
     match target {
         RootImageTarget::InitBoot => true,
-        RootImageTarget::Boot => ltbox_core::model::is_tb320fc_model(device_model),
+        RootImageTarget::Boot => ltbox_core::model::capabilities(device_model).boot_vbmeta_is_hash,
     }
 }
 
@@ -568,8 +568,10 @@ pub fn build_patched_artifacts(
     let (patched_vbmeta, vbmeta_partition) = if skip_avb {
         // TB323FU GBL root: boot verification is handled by the GBL EFI on
         // `efisp`, so the stock AVB verification path is bypassed. Flash the
-        // repacked image as-is — no hash footer re-add, no vbmeta rebuild, no
-        // vbmeta flash (the caller skips the vbmeta dump too).
+        // repacked image as-is — no hash footer re-signing, no vbmeta rebuild,
+        // no vbmeta flash (the caller skips the vbmeta dump too). Magiskboot
+        // may retain the original embedded VBMeta/footer; this branch does
+        // not erase it or refresh its signature after replacing the kernel.
         ltbox_core::live!(log, "[AVB] {}", tr("log_root_skip_avb_tb323fu"));
         (None, None)
     } else {

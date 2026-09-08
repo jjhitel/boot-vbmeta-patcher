@@ -1,1 +1,4 @@
-* -text
+# Git stores text as LF and checks it out as LF everywhere, so a tool that
+# writes CRLF cannot land mixed endings in a file. Binary content is detected
+# by content, not extension, and is never touched.
+* text=auto eol=lf

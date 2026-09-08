@@ -298,7 +298,8 @@ fn real_vendor_boot_images_match_known_shapes_and_apply_exactly() {
     assert!(produced_info.original_image_size.is_some());
 
     let vendor_descriptor = vendor_boot_hash_descriptor(&avb_output.vendor_boot);
-    let vbmeta_descriptor = vendor_boot_hash_descriptor(&avb_output.vbmeta);
+    let rebuilt_vbmeta = avb_output.vbmeta.as_ref().expect("vbmeta rebuilt");
+    let vbmeta_descriptor = vendor_boot_hash_descriptor(rebuilt_vbmeta);
     assert_eq!(vendor_descriptor, vbmeta_descriptor);
     avbtool_rs::verify::verify_image(
         &avb_output.vendor_boot,

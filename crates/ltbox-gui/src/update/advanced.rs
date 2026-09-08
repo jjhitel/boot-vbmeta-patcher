@@ -11,15 +11,10 @@ impl App {
                 Message::DumpPhys(DumpPhysMsg::DumpPhysLoaderChosen(__v))
             }),
             DumpPhysMsg::DumpPhysLoaderChosen(path) => {
-                if let Some(p) = path {
-                    match self.resolve_loader_input(&p) {
-                        Ok(loader) => {
-                            self.dump_phys.loader_path = Some(loader);
-                            self.dump_phys.loader_error = None;
-                        }
-                        Err(msg) => self.dump_phys.loader_error = Some(msg),
-                    }
-                }
+                self.apply_loader_pick(path, |app, loader, err| {
+                    app.dump_phys.loader_path = loader;
+                    app.dump_phys.loader_error = err;
+                });
                 Task::none()
             }
             DumpPhysMsg::DumpPhysToggleRow(idx) => {
@@ -66,7 +61,7 @@ impl App {
                     let phases =
                         self.begin_phased_op(View::Advanced, OperationPhaseKind::DumpPhysical);
                     self.error_msg = None;
-                    let conn = self.connection;
+                    let conn = self.device.connection;
                     let luns = self.dump_phys.selected_luns();
                     self.log_push(format!(
                         "[DumpPhys] {}",
@@ -101,15 +96,10 @@ impl App {
                 Message::FlashPhys(FlashPhysMsg::FlashPhysLoaderChosen(__v))
             }),
             FlashPhysMsg::FlashPhysLoaderChosen(path) => {
-                if let Some(p) = path {
-                    match self.resolve_loader_input(&p) {
-                        Ok(loader) => {
-                            self.flash_phys.loader_path = Some(loader);
-                            self.flash_phys.loader_error = None;
-                        }
-                        Err(msg) => self.flash_phys.loader_error = Some(msg),
-                    }
-                }
+                self.apply_loader_pick(path, |app, loader, err| {
+                    app.flash_phys.loader_path = loader;
+                    app.flash_phys.loader_error = err;
+                });
                 Task::none()
             }
             FlashPhysMsg::FlashPhysToggleRow(idx) => {
@@ -163,7 +153,7 @@ impl App {
                 let phases =
                     self.begin_phased_op(View::Advanced, OperationPhaseKind::FlashPhysical);
                 self.error_msg = None;
-                let conn = self.connection;
+                let conn = self.device.connection;
                 let pairs = self.flash_phys.active_pairs();
                 self.log_lines.push(format!(
                     "[FlashPhys] {}",
@@ -192,15 +182,10 @@ impl App {
                 Message::DumpParts(DumpPartsMsg::DumpPartsLoaderChosen(__v))
             }),
             DumpPartsMsg::DumpPartsLoaderChosen(path) => {
-                if let Some(p) = path {
-                    match self.resolve_loader_input(&p) {
-                        Ok(loader) => {
-                            self.dump_parts.loader_path = Some(loader);
-                            self.dump_parts.scan_error = None;
-                        }
-                        Err(msg) => self.dump_parts.scan_error = Some(msg),
-                    }
-                }
+                self.apply_loader_pick(path, |app, loader, err| {
+                    app.dump_parts.loader_path = loader;
+                    app.dump_parts.loader_error = err;
+                });
                 Task::none()
             }
             DumpPartsMsg::DumpPartsToggleRow(idx) => {
@@ -250,13 +235,13 @@ impl App {
                     Ok(p) => p,
                     Err(()) => return Task::none(),
                 };
-                self.dump_parts.entry_connection = Some(self.connection);
+                self.dump_parts.entry_connection = Some(self.device.connection);
                 self.dump_parts.scanning = true;
                 self.dump_parts.scan_error = None;
                 self.dump_parts.rows.clear();
                 self.begin_op(View::Advanced);
                 self.error_msg = None;
-                let conn = self.connection;
+                let conn = self.device.connection;
                 self.log_push(format!(
                     "[DumpParts] {}",
                     ltbox_core::i18n::tr("live_dumpparts_scan_start")
@@ -277,18 +262,18 @@ impl App {
                 self.dump_parts.scanning = false;
                 self.dump_parts.rows = result.rows;
                 self.dump_parts.apply_sort();
-                if let Some(err) = result.error {
-                    self.dump_parts.scan_error = Some(err);
-                } else if self.dump_parts.rows.is_empty() {
-                    self.dump_parts.scan_error =
-                        Some("No partitions returned from device".to_string());
-                } else {
+                self.dump_parts.scan_error =
+                    self.parts_scan_outcome(result.error, self.dump_parts.rows.is_empty());
+                if self.dump_parts.scan_error.is_none() {
                     self.dump_parts.step = 1;
                     // A successful Firehose GPT scan proves the device is in
                     // EDL; reflect it immediately (the 3s poll may still show a
                     // stale ADB/Fastboot state) so a sidebar bounce right after
                     // the scan keeps the loaded table via `advanced_in_progress`.
-                    self.connection = ConnectionStatus::Edl;
+                    self.apply_device_snapshot(DevicePollResult {
+                        status: ConnectionStatus::Edl,
+                        ..DevicePollResult::default()
+                    });
                 }
                 Task::none()
             }
@@ -358,15 +343,10 @@ impl App {
                 Message::FlashParts(FlashPartsMsg::FlashPartsLoaderChosen(__v))
             }),
             FlashPartsMsg::FlashPartsLoaderChosen(path) => {
-                if let Some(p) = path {
-                    match self.resolve_loader_input(&p) {
-                        Ok(loader) => {
-                            self.flash_parts.loader_path = Some(loader);
-                            self.flash_parts.scan_error = None;
-                        }
-                        Err(msg) => self.flash_parts.scan_error = Some(msg),
-                    }
-                }
+                self.apply_loader_pick(path, |app, loader, err| {
+                    app.flash_parts.loader_path = loader;
+                    app.flash_parts.loader_error = err;
+                });
                 Task::none()
             }
             FlashPartsMsg::FlashPartsToggleRow(idx) => {
@@ -442,7 +422,7 @@ impl App {
                     Ok(p) => p,
                     Err(()) => return Task::none(),
                 };
-                self.flash_parts.entry_connection = Some(self.connection);
+                self.flash_parts.entry_connection = Some(self.device.connection);
                 // Loader-upload + GPT read to enumerate partitions — a
                 // *read*, not a flash. Use the Advanced busy view so the
                 // dialog shows `busy_partition_scan` ("Reading partition
@@ -452,7 +432,7 @@ impl App {
                 self.flash_parts.scanning = true;
                 self.flash_parts.scan_error = None;
                 self.flash_parts.rows.clear();
-                let conn = self.connection;
+                let conn = self.device.connection;
                 self.log_push(format!(
                     "[FlashParts] {}",
                     ltbox_core::i18n::tr("live_flashparts_scan_start")
@@ -472,15 +452,19 @@ impl App {
                 self.flash_parts.scanning = false;
                 self.flash_parts.rows = result.rows;
                 self.flash_parts.apply_sort();
-                self.flash_parts.scan_error = result.error.clone();
+                self.flash_parts.scan_error =
+                    self.parts_scan_outcome(result.error, self.flash_parts.rows.is_empty());
                 self.end_op();
-                if result.error.is_none() && !self.flash_parts.rows.is_empty() {
+                if self.flash_parts.scan_error.is_none() {
                     self.flash_parts.next(); // → Select
                     // A successful Firehose GPT scan proves the device is in
                     // EDL; reflect it immediately (the 3s poll may still show a
                     // stale ADB/Fastboot state) so a sidebar bounce right after
                     // the scan keeps the loaded table via `advanced_in_progress`.
-                    self.connection = ConnectionStatus::Edl;
+                    self.apply_device_snapshot(DevicePollResult {
+                        status: ConnectionStatus::Edl,
+                        ..DevicePollResult::default()
+                    });
                 }
                 Task::none()
             }
@@ -576,7 +560,7 @@ impl App {
                 self.simple_flash.next(); // → Exec screen
                 let phases = self.begin_phased_op(View::Advanced, OperationPhaseKind::SimpleFlash);
                 self.error_msg = None;
-                let conn = self.connection;
+                let conn = self.device.connection;
                 let fw_folder = self
                     .simple_flash
                     .firmware_folder
@@ -788,8 +772,8 @@ impl App {
                         let phases =
                             self.begin_phased_op(View::Advanced, OperationPhaseKind::ChangeCountry);
                         self.error_msg = None;
-                        let conn = self.connection;
-                        let device_model = self.device_model.clone();
+                        let conn = self.device.connection;
+                        let device_model = self.device.model.clone();
                         let ll = self.live_labels();
                         let label = self.t(action.label_key()).to_string();
                         self.log_push(format!("[Advanced] {label}"));
@@ -1069,8 +1053,8 @@ impl App {
             AdvMsg::AdvDetectArbExecStart => {
                 let phases = self.begin_phased_op(View::Advanced, OperationPhaseKind::DetectArb);
                 self.error_msg = None;
-                let conn = self.connection;
-                let device_model = self.device_model.clone();
+                let conn = self.device.connection;
+                let device_model = self.device.model.clone();
                 let loader_path = self.adv_wizard.file_path.clone();
                 let i_anti = self.t("arb_detect_is_anti_rollback").to_string();
                 let i_not = self.t("arb_detect_no_anti_rollback").to_string();

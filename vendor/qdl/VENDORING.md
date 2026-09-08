@@ -26,6 +26,12 @@ carrying the minimal patches we need.
 
 ## Local patches
 
+- **Preserve every byte when dumping storage** (`src/lib.rs`).
+  `firehose_read_storage` uses `write_all` for each received chunk before
+  advancing its byte count. A short output write is retried, while a zero-length
+  write or output error aborts the dump instead of silently discarding bytes.
+  Regression tests live in `crates/ltbox-device/tests/firehose_read.rs` so they
+  run with the LTBox workspace tests.
 - **Drop the redundant explicit ZLP in `firehose_program_storage`**
   (`src/lib.rs`). The USB `Write` impl already terminates every transfer
   via `EndpointWrite::submit_end()` — a zero-length packet when the
@@ -62,6 +68,11 @@ carrying the minimal patches we need.
   compared equal. `firehose_program_storage_with_progress`,
   `firehose_read_storage`, and `sahara_dump_region` now call
   `pb.finish_println("")` when their transfer loop ends.
+
+- **Reject ambiguous USB selection** (`src/usb.rs`). Enumerate every matching
+  EDL candidate before opening a handle, including duplicate serial matches.
+  Multiple candidates require the user to disconnect other devices. Propagate
+  enumeration errors instead of panicking.
 
 ## Updating
 

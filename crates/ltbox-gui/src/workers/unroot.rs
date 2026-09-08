@@ -3,16 +3,14 @@
 //! handler.
 
 use crate::{
-    ConnectionStatus, LiveLabels, PhaseReporter, UnrootType, find_edl_loader, open_edl_session,
-    root_skips_avb_postprocess, transition_to_edl,
+    ConnectionStatus, PhaseReporter, UnrootType, find_edl_loader, open_edl_session,
+    transition_to_edl,
 };
 use ltbox_core::{i18n::tr, live, tr_args};
 
 use std::path::{Path, PathBuf};
 
-use super::root_backup::{
-    BackupContents, BackupRootTarget, ROOT_BACKUP_MANIFEST_NAME, resolve_backup_contents,
-};
+use super::root_backup::{BackupContents, BackupRootTarget, resolve_backup_contents};
 
 pub(crate) fn unroot_worker(
     folder: String,
@@ -20,7 +18,6 @@ pub(crate) fn unroot_worker(
     loader_override: Option<String>,
     device_model: String,
     conn: ConnectionStatus,
-    ll: LiveLabels,
     phases: PhaseReporter,
 ) -> Result<Vec<String>, String> {
     let mut log = Vec::new();
@@ -28,20 +25,14 @@ pub(crate) fn unroot_worker(
     // moves it: a user who was already in EDL stays there, anyone else goes back
     // to system.
     let edl_start = matches!(conn, ConnectionStatus::Edl);
-    if ltbox_core::model::is_xiaoxin_pro13_model(&device_model) {
+    if !ltbox_core::model::capabilities(&device_model).unroot {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
     let dir = std::path::Path::new(&folder);
 
     live!(log, "[Unroot] {}", phases.marker(1));
 
-    let backup = resolve_backup_contents(dir, unroot_type).map_err(|error| {
-        tr_args!(
-            "err_unroot_backup_manifest_invalid",
-            manifest = ROOT_BACKUP_MANIFEST_NAME,
-            error = error
-        )
-    })?;
+    let backup = resolve_backup_contents(dir, unroot_type, &device_model)?;
     let root_target = backup.root_target;
     let root_image_name = root_target.filename();
     let base_part = root_target.partition_base();
@@ -61,11 +52,8 @@ pub(crate) fn unroot_worker(
     }
     if let Ok(info) = ltbox_patch::avb::extract_image_avb_info(&root_image_path)
         && let Some(fingerprint) = ltbox_patch::avb::build_fingerprint(&info)
-        // Bidirectional SKU equivalence makes the TB376FC token match TB390FU too.
-        && ltbox_core::model::fingerprint_model_match(
-            &fingerprint,
-            ltbox_core::model::TB376FC_MODEL,
-        )
+        && ltbox_core::model::fingerprint_capabilities(&fingerprint)
+            .any(|capabilities| !capabilities.unroot)
     {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
@@ -79,7 +67,7 @@ pub(crate) fn unroot_worker(
     live!(log, "[Unroot] {}", restored_label);
 
     // Slot resolution must succeed —
-    // unroot writes the manifest-resolved root target +
+    // unroot writes the filename-resolved root target +
     // vbmeta_<slot> from the user's
     // backup folder. Defaulting to `_a`
     // when the device was on `_b`
@@ -158,31 +146,33 @@ pub(crate) fn unroot_worker(
     // Nothing to compare on the testkey efisp/GBL route: its root run never ran
     // AVB post-processing, so the backup images hold no AVB metadata and the
     // pre-verification restore path is the correct one.
-    let (root_image_path, vbmeta_path) = if root_skips_avb_postprocess(&device_model) {
-        live!(log, "[Unroot] {}", tr("live_unroot_verify_skipped"));
-        (root_image_path, vbmeta_path)
-    } else {
-        match verify_against_device(
-            &mut session,
-            backup,
-            &slot,
-            &root_image_path,
-            vbmeta_path.as_deref(),
-            &mut log,
-        ) {
-            Ok(verified) => verified,
-            Err(error) => {
-                if edl_start {
-                    let _ = session.reset_to_edl(&mut log);
-                } else {
-                    let _ = session.reset(&mut log);
+    let (root_image_path, vbmeta_path) =
+        if ltbox_core::model::capabilities(&device_model).root_uses_gbl {
+            live!(log, "[Unroot] {}", tr("live_unroot_verify_skipped"));
+            (root_image_path, vbmeta_path)
+        } else {
+            match verify_against_device(
+                &mut session,
+                backup,
+                &slot,
+                &root_image_path,
+                vbmeta_path.as_deref(),
+                &mut log,
+            ) {
+                Ok(verified) => verified,
+                Err(error) => {
+                    if edl_start {
+                        let _ = session.reset_to_edl(&mut log);
+                    } else {
+                        let _ = session.reset(&mut log);
+                    }
+                    return Err(error);
                 }
-                return Err(error);
             }
-        }
-    };
+        };
 
     live!(log, "[Unroot] {} ({restored_label})", phases.marker(5));
+    phases.mark_writes_started();
     session
         .flash_partition(
             &root_image_label,
@@ -199,6 +189,7 @@ pub(crate) fn unroot_worker(
             )
         })?;
     if let Some(vbmeta_path) = &vbmeta_path {
+        phases.mark_writes_started();
         session
             .flash_partition(&vbm_label, vbmeta_path, 0, vbm_lun, &mut log)
             .map_err(|e| tr_args!("err_unroot_flash_failed", label = vbm_label, error = e))?;
@@ -208,7 +199,11 @@ pub(crate) fn unroot_worker(
     session
         .reset(&mut log)
         .map_err(|e| tr_args!("err_reset_failed", error = e))?;
-    live!(log, "[Unroot] {}", ll.unroot_completed);
+    live!(
+        log,
+        "[Unroot] {}",
+        ltbox_core::i18n::tr("live_image_flash_completed")
+    );
     Ok(log)
 }
 

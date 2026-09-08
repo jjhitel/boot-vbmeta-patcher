@@ -20,11 +20,40 @@ pub(crate) fn efisp_asset_suffix(is_prc: bool, arb: bool) -> &'static str {
 }
 
 /// A dumped `efisp` partition counts as empty (un-provisioned) when every byte
-/// is zero — the stock/erased state. A GBL-provisioned `efisp` carries the EFI
+/// is zero and the dump is nonempty — the stock/erased state.
+/// A GBL-provisioned efisp carries the EFI
 /// payload, so it has non-zero bytes. The TB323FU root flow uses an empty result
 /// to provision the appropriate region GBL before continuing.
 pub(crate) fn efisp_is_empty(data: &[u8]) -> bool {
-    data.iter().all(|&b| b == 0)
+    !data.is_empty() && data.iter().all(|&b| b == 0)
+}
+
+/// A missing, unreadable or zero-length dump cannot establish provisioning state.
+fn read_efisp_is_empty(path: &std::path::Path) -> Result<bool, String> {
+    let data = std::fs::read(path).map_err(|error| {
+        tr_args!(
+            "err_efisp_read_failed",
+            path = path.display(),
+            error = error
+        )
+    })?;
+    if data.is_empty() {
+        return Err(ltbox_core::i18n::tr("err_efisp_dump_empty"));
+    }
+    Ok(efisp_is_empty(&data))
+}
+
+/// Select a GBL only after positively identifying the vendor_boot region.
+pub(crate) fn efisp_suffix_for_vendor_boot(
+    path: &std::path::Path,
+    arb: bool,
+) -> Result<&'static str, String> {
+    use ltbox_patch::region::RegionTarget;
+    match ltbox_patch::region::detect_product_region(path) {
+        Some(RegionTarget::Prc) => Ok(efisp_asset_suffix(true, arb)),
+        Some(RegionTarget::Row) => Ok(efisp_asset_suffix(false, arb)),
+        None => Err(tr_args!("err_efisp_region_unknown", path = path.display())),
+    }
 }
 
 /// Inspect TB323FU `efisp` and, when it is still all-zero, stage the matching
@@ -55,9 +84,7 @@ pub(crate) fn prepare_tb323fu_efisp(
                 error = e
             )
         })?;
-    let efisp_empty = std::fs::read(&dumped_efisp)
-        .map(|data| efisp_is_empty(&data))
-        .unwrap_or(true);
+    let efisp_empty = read_efisp_is_empty(&dumped_efisp)?;
     if !efisp_empty {
         live!(log, "[Root] {}", ltbox_core::i18n::tr("log_root_efisp_ok"));
         return Ok(None);
@@ -66,52 +93,147 @@ pub(crate) fn prepare_tb323fu_efisp(
     // Empty efisp is the stock, GBL-unprovisioned state. Region comes from
     // vendor_boot's product_region marker because the AVB fingerprint carries
     // no PRC/ROW token on TB323FU.
-    let is_prc = if let Some(path) = dumped_vendor_boot {
-        ltbox_patch::region::detect_product_region(path)
-            == Some(ltbox_patch::region::RegionTarget::Prc)
+    let suffix = if let Some(path) = dumped_vendor_boot {
+        efisp_suffix_for_vendor_boot(path, false)?
     } else {
         let partition = format!("vendor_boot{slot_suffix}");
         let path = work_dir.join("vendor_boot.img");
-        match ltbox_core::partition_lun::lun_for_partition(&partition) {
-            Some(lun)
-                if session
-                    .dump_partition(&partition, &path, 0, lun, log)
-                    .is_ok() =>
-            {
-                ltbox_patch::region::detect_product_region(&path)
-                    == Some(ltbox_patch::region::RegionTarget::Prc)
-            }
-            _ => false,
-        }
+        let lun = ltbox_core::partition_lun::lun_for_partition(&partition)
+            .ok_or_else(|| tr_args!("err_no_hardcoded_lun", partition = partition))?;
+        session
+            .dump_partition(&partition, &path, 0, lun, log)
+            .map_err(|error| {
+                tr_args!(
+                    "err_root_dump_partition_failed",
+                    partition = partition,
+                    error = error
+                )
+            })?;
+        efisp_suffix_for_vendor_boot(&path, false)?
     };
-    let suffix = efisp_asset_suffix(is_prc, false);
+    fetch_efisp_asset(suffix, efi_dir, "[Root]", log).map(Some)
+}
+
+/// Download the pinned efisp GBL for `suffix` into `efi_dir` and verify it.
+///
+/// Every caller writes the result to the device's `efisp` partition, so the
+/// release tag is pinned, the asset name must be one of a fixed set, and the
+/// bytes are SHA-256 checked before the path is handed back. The Flash path
+/// grew those three guards first; Root and KonaBess reached the same partition
+/// through a copy that floated on `latest` and verified nothing.
+pub(crate) fn fetch_efisp_asset(
+    suffix: &str,
+    efi_dir: &std::path::Path,
+    log_tag: &str,
+    log: &mut Vec<String>,
+) -> std::result::Result<std::path::PathBuf, String> {
+    let expected_name = efisp_expected_asset(suffix).ok_or_else(|| {
+        tr_args!(
+            "err_efisp_asset_unknown",
+            asset = suffix,
+            tag = EFISP_GBL_RELEASE_TAG
+        )
+    })?;
     live!(
         log,
-        "[Root] {}",
+        "{} {}",
+        log_tag,
         tr_args!("live_flash_efisp_fetch", variant = suffix)
     );
     let gh = ltbox_core::github::GitHubClient::from_url("github.com/miner7222/gbl_root_baldur")
-        .map_err(|e| tr_args!("err_root_efisp_github_failed", error = e))?;
-    let (asset_name, asset_url) = gh
-        .latest_release_asset_where(|name| name.to_ascii_lowercase().ends_with(suffix))
-        .map_err(|e| tr_args!("err_root_efisp_asset_missing", suffix = suffix, error = e))?;
+        .map_err(|e| tr_args!("err_efisp_github_failed", error = e))?;
+    let assets = gh
+        .release_by_tag(EFISP_GBL_RELEASE_TAG)
+        .map_err(|e| tr_args!("err_efisp_github_failed", error = e))?;
+    let (asset_name, asset_url) = assets
+        .into_iter()
+        .find(|(name, _)| name == expected_name)
+        .ok_or_else(|| {
+            tr_args!(
+                "err_efisp_asset_missing",
+                suffix = suffix,
+                tag = EFISP_GBL_RELEASE_TAG
+            )
+        })?;
     let _ = std::fs::remove_dir_all(efi_dir);
     std::fs::create_dir_all(efi_dir)
-        .map_err(|e| tr_args!("err_root_efisp_work_dir_failed", error = e))?;
+        .map_err(|e| tr_args!("err_efisp_work_dir_failed", error = e))?;
     let efi_path = efi_dir.join(&asset_name);
-    if let Err(e) = ltbox_core::downloader::download_to_file(&asset_url, &efi_path, log) {
-        return Err(tr_args!(
-            "err_root_efisp_download_failed",
-            asset = asset_name,
-            error = e
-        ));
-    }
+    ltbox_core::downloader::download_to_file(&asset_url, &efi_path, log)
+        .map_err(|e| tr_args!("err_efisp_download_failed", asset = asset_name, error = e))?;
+    verify_efisp_asset(&efi_path, &asset_name)?;
     live!(
         log,
-        "[Root] {}",
+        "{} {}",
+        log_tag,
         tr_args!("live_flash_efisp_fetched", name = asset_name)
     );
-    Ok(Some(efi_path))
+    Ok(efi_path)
+}
+
+/// Pinned gbl_root_baldur release used for TB323FU efisp GBL images.
+pub(crate) const EFISP_GBL_RELEASE_TAG: &str = "5.3.120-mod5";
+
+/// Exact asset names accepted for the pinned efisp release.
+pub(crate) const EFISP_EXPECTED_ASSETS: &[(&str, &str)] = &[
+    (
+        "generic_superfastboot_prc.efi",
+        "22471c543e13a433cb05c5c54bcfaf107f2643a6cfd7e46d8d73764b349e8cf2",
+    ),
+    (
+        "generic_superfastboot_prc_arb.efi",
+        "fc55e6a4912f20c1bf0c664bb985e10d0c4e0944f92fab5e4f855b22e2aefcdf",
+    ),
+    (
+        "generic_superfastboot_row.efi",
+        "90b16cacc4f2f6aded2c5bf0eed7d20b6a294115f6cf09dab555b4a4496e2628",
+    ),
+    (
+        "generic_superfastboot_row_arb.efi",
+        "99b62f4aeca619df4f480f6bffa3f0fea3ef2516a8fe48a092613c2aa68d10e2",
+    ),
+];
+
+/// Map a region/ARB suffix to the exact pinned asset name for the
+/// `5.3.120-mod5` gbl_root_baldur release. Unknown suffixes refuse.
+pub(crate) fn efisp_expected_asset(suffix: &str) -> Option<&'static str> {
+    match suffix {
+        "_prc.efi" => Some("generic_superfastboot_prc.efi"),
+        "_prc_arb.efi" => Some("generic_superfastboot_prc_arb.efi"),
+        "_row.efi" => Some("generic_superfastboot_row.efi"),
+        "_row_arb.efi" => Some("generic_superfastboot_row_arb.efi"),
+        _ => None,
+    }
+}
+
+/// SHA-256 hex for a pinned efisp asset name. Unknown names refuse.
+pub(crate) fn efisp_expected_sha256(asset_name: &str) -> Option<&'static str> {
+    EFISP_EXPECTED_ASSETS
+        .iter()
+        .find(|(name, _)| *name == asset_name)
+        .map(|(_, hash)| *hash)
+}
+
+/// Verify a downloaded efisp EFI against the pinned name → SHA-256 map.
+/// Unknown names and hash mismatches both refuse.
+pub(crate) fn verify_efisp_asset(path: &std::path::Path, asset_name: &str) -> Result<(), String> {
+    let expected = efisp_expected_sha256(asset_name).ok_or_else(|| {
+        tr_args!(
+            "err_efisp_asset_unknown",
+            asset = asset_name,
+            tag = EFISP_GBL_RELEASE_TAG
+        )
+    })?;
+    let actual = crate::file_hash::sha256_hex_file(path).map_err(|error| error.to_string())?;
+    if actual != expected {
+        return Err(tr_args!(
+            "err_efisp_hash_mismatch",
+            asset = asset_name,
+            expected = expected,
+            actual = actual
+        ));
+    }
+    Ok(())
 }
 
 /// Provision a staged TB323FU region GBL. `None` is the already-provisioned
@@ -475,7 +597,49 @@ pub(crate) fn build_testkey_arb_overlays_for_floors(
 
 #[cfg(test)]
 mod provisioning_tests {
-    use super::select_arb_rollback_targets;
+    use super::{efisp_suffix_for_vendor_boot, read_efisp_is_empty, select_arb_rollback_targets};
+
+    #[test]
+    fn efisp_dump_requires_readable_nonempty_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("efisp.img");
+        assert!(read_efisp_is_empty(&path).is_err());
+        assert!(read_efisp_is_empty(dir.path()).is_err());
+        std::fs::write(&path, []).unwrap();
+        assert!(read_efisp_is_empty(&path).is_err());
+        std::fs::write(&path, [0; 4096]).unwrap();
+        assert!(read_efisp_is_empty(&path).unwrap());
+        std::fs::write(&path, [0, 0, 1, 0]).unwrap();
+        assert!(!read_efisp_is_empty(&path).unwrap());
+    }
+
+    #[test]
+    fn gbl_selection_requires_a_known_region_for_stock_and_arb() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vendor_boot.img");
+        for arb in [false, true] {
+            assert!(efisp_suffix_for_vendor_boot(&path, arb).is_err());
+            assert!(efisp_suffix_for_vendor_boot(dir.path(), arb).is_err());
+        }
+        for data in [b"".as_slice(), b"invalid", b"product_region\0model\0"] {
+            std::fs::write(&path, data).unwrap();
+            for arb in [false, true] {
+                assert!(efisp_suffix_for_vendor_boot(&path, arb).is_err());
+            }
+        }
+        // Minimal product_region FDT property layout accepted by the detector.
+        for (region, stock, arb) in [
+            (b"PRC\0", "_prc.efi", "_prc_arb.efi"),
+            (b"ROW\0", "_row.efi", "_row_arb.efi"),
+        ] {
+            let mut data = b"product_region\0\0".to_vec();
+            data.extend_from_slice(&[0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0x26, 0xb7]);
+            data.extend_from_slice(region);
+            std::fs::write(&path, data).unwrap();
+            assert_eq!(efisp_suffix_for_vendor_boot(&path, false).unwrap(), stock);
+            assert_eq!(efisp_suffix_for_vendor_boot(&path, true).unwrap(), arb);
+        }
+    }
 
     #[test]
     fn automatic_targets_keep_firmware_index_or_raise_to_device_floor() {

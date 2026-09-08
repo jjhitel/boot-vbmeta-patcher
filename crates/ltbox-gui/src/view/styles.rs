@@ -27,7 +27,6 @@ pub(crate) fn accent_style(t: &Theme) -> iced::widget::text::Style {
 }
 
 /// `success` — completion markers and "ok" status.
-#[allow(dead_code)]
 pub(crate) fn success_style(t: &Theme) -> iced::widget::text::Style {
     iced::widget::text::Style {
         color: Some(pal_of(t).success),
