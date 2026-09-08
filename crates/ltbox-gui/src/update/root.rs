@@ -27,7 +27,7 @@ impl App {
     pub(crate) fn update_root(&mut self, msg: RootMsg) -> Task<Message> {
         match msg {
             RootMsg::RootFamily(f) => {
-                if self.is_xiaoxin_pro13() {
+                if !ltbox_core::model::capabilities(&self.device.model).root {
                     return Task::none();
                 }
                 self.root.family = Some(f);
@@ -58,13 +58,16 @@ impl App {
                 Task::none()
             }
             RootMsg::RootMode(m) => {
-                if self.is_xiaoxin_pro13() {
+                if !ltbox_core::model::capabilities(&self.device.model).root {
                     return Task::none();
                 }
-                // TODO(root): LTBox currently only swaps the boot.img Image
-                // for GKI, which corrupts boot on TB323FU. Keep it disabled
-                // until vbmeta handling is added.
-                if self.is_tb323fu() && m == RootMode::Gki {
+                // TODO(root): Direct GKI installation from stock has a reported
+                // TB323FU boot failure. Offline repack parity alone does not
+                // establish the required GBL/init_boot state; keep this gated
+                // until the device installation path is verified.
+                if !ltbox_core::model::capabilities(&self.device.model).gki_root
+                    && m == RootMode::Gki
+                {
                     return Task::none();
                 }
                 self.root.mode = Some(m);
@@ -375,17 +378,17 @@ impl App {
                 if self.operation.is_running() {
                     return Task::none();
                 }
-                if self.is_xiaoxin_pro13() {
+                if !ltbox_core::model::capabilities(&self.device.model).root {
                     self.error_msg =
                         Some(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
                     return Task::none();
                 }
-                // TODO(root): LTBox currently only swaps the boot.img Image
-                // for GKI, which corrupts boot on TB323FU. The mode card is
-                // disabled, but stale selections can survive from before the
-                // model was identified; refuse them until vbmeta handling is
-                // added.
-                if self.is_tb323fu() && self.root.is_gki() {
+                // Direct GKI installation on TB323FU still needs device
+                // verification. Reject stale selections made before the model
+                // was identified, as well as disabling the mode card.
+                if !ltbox_core::model::capabilities(&self.device.model).gki_root
+                    && self.root.is_gki()
+                {
                     self.root.mode = None;
                     self.root.step = 1; // Mode step
                     self.error_msg = Some(tr_args!("model_unsupported", model = "TB323FU"));
@@ -533,6 +536,43 @@ impl App {
 #[cfg(test)]
 mod tests {
     use crate::*;
+
+    #[test]
+    fn unsupported_model_messages_cannot_start_operations() {
+        for model in ["TB376FC", "TB390FU"] {
+            let mut app = App::default();
+            app.device.model = model.into();
+            let _ = app.update_root(RootMsg::RootFamily(Family::Magisk));
+            assert!(app.root.family.is_none());
+            let _ = app.update_root(RootMsg::RootExecStart);
+            assert!(!app.operation.is_running());
+            assert_eq!(
+                app.error_msg,
+                Some(tr_args!("model_unsupported", model = "TB376FC / TB390FU"))
+            );
+            app.error_msg = None;
+            let _ = app.update_unroot(UnrootMsg::UnrootExecStart);
+            assert!(!app.operation.is_running());
+            assert!(app.error_msg.is_some());
+            app.error_msg = None;
+            let _ = app.update_konabess(KonaBessMsg::KonaBessNext);
+            assert!(!app.operation.is_running());
+            assert_eq!(app.konabess.step, 0);
+            assert!(app.error_msg.is_some());
+        }
+        let mut app = App::default();
+        app.device.model = "TB323FU".into();
+        let _ = app.update_root(RootMsg::RootMode(RootMode::Gki));
+        assert!(app.root.mode.is_none());
+        app.root.mode = Some(RootMode::Gki);
+        let _ = app.update_root(RootMsg::RootExecStart);
+        assert!(!app.operation.is_running());
+        assert!(app.root.mode.is_none());
+        assert_eq!(
+            app.error_msg,
+            Some(tr_args!("model_unsupported", model = "TB323FU"))
+        );
+    }
 
     fn ksu_lkm_confirm_wizard() -> RootWizard {
         RootWizard {

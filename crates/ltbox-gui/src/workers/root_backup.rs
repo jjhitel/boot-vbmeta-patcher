@@ -66,7 +66,7 @@ pub(super) fn resolve_backup_contents(
     // same participation rule as Root instead of trusting its mere presence
     // or consuming the old manifest. Chained boot and TB323FU leave it alone.
     let restore_vbmeta = ltbox_patch::root_pipeline::root_run_rebuilds_vbmeta(target, device_model)
-        && !crate::root_skips_avb_postprocess(device_model)
+        && !ltbox_core::model::capabilities(device_model).root_uses_gbl
         && backup_dir.join("vbmeta.img").is_file();
     Ok(BackupContents {
         root_target,

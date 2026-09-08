@@ -685,15 +685,14 @@ pub(crate) fn firmware_needs_bootloader_step(
     fingerprint: Option<&str>,
 ) -> bool {
     key_class == ltbox_patch::key_map::KeyClass::Lenovo
-        && ![
-            "TB323FU",
-            ltbox_core::model::TB376FC_MODEL,
-            ltbox_core::model::TB390FU_MODEL,
-        ]
-        .into_iter()
-        .any(|model| {
-            fingerprint
-                .is_some_and(|value| ltbox_core::model::fingerprint_model_match(value, model))
+        && !fingerprint.is_some_and(|fp| {
+            ltbox_core::model::fingerprint_capabilities(fp).any(|caps| {
+                matches!(
+                    caps.rollback,
+                    ltbox_core::model::RollbackPolicy::Gbl
+                        | ltbox_core::model::RollbackPolicy::ReadOnly
+                )
+            })
         })
 }
 

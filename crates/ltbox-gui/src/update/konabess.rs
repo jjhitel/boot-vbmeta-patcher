@@ -7,7 +7,7 @@ use ltbox_core::tr_args;
 
 impl App {
     pub(crate) fn update_konabess(&mut self, msg: KonaBessMsg) -> Task<Message> {
-        if self.is_xiaoxin_pro13()
+        if !ltbox_core::model::capabilities(&self.device.model).konabess
             && matches!(
                 &msg,
                 KonaBessMsg::KonaBessSelectLoader | KonaBessMsg::KonaBessNext
@@ -117,7 +117,8 @@ impl App {
                                 let phases = self
                                     .begin_phased_op(View::KonaBess, OperationPhaseKind::KonaBess);
                                 let conn = self.device.connection;
-                                let is_tb323fu = self.is_tb323fu();
+                                let uses_gbl = ltbox_core::model::capabilities(&self.device.model)
+                                    .root_uses_gbl;
                                 let device_model = self.device.model.clone();
                                 let ll = self.live_labels();
                                 let loader = std::path::PathBuf::from(loader);
@@ -128,7 +129,7 @@ impl App {
                                                 konabess_inspection_worker(
                                                     conn,
                                                     loader,
-                                                    is_tb323fu,
+                                                    uses_gbl,
                                                     device_model,
                                                     ll,
                                                     phases,

@@ -11,7 +11,7 @@ impl App {
                 // out ROW, but a stale message from a pre-poll click
                 // could still land here. Drop it so the wizard never
                 // accepts a region the hardware doesn't ship with.
-                if self.is_tb322fc() && r == DeviceRegion::Row {
+                if self.model_capabilities().prc_only && r == DeviceRegion::Row {
                     return Task::none();
                 }
                 self.flash.device_region = Some(r);
@@ -89,7 +89,7 @@ impl App {
                 // TB322FC: cross-region (OtherRegion) flashes are blocked
                 // because the only valid region is PRC. Drop the message
                 // even if a stale dispatch slips past the disabled card.
-                if self.is_tb322fc() && t == FlashTarget::OtherRegion {
+                if self.model_capabilities().prc_only && t == FlashTarget::OtherRegion {
                     return Task::none();
                 }
                 self.flash.target = Some(t);
@@ -298,6 +298,16 @@ impl App {
                 }
                 let phases = self.begin_phased_op(View::Flash, OperationPhaseKind::Flash);
                 self.error_msg = None;
+                let effective = effective_rollback_mode(
+                    self.flash_rollback_policy(),
+                    self.wf_config.modify_rollback.to_mode(),
+                );
+                self.wf_config.modify_rollback = match effective {
+                    ltbox_patch::rollback::RollbackMode::On => RollbackSetting::On,
+                    ltbox_patch::rollback::RollbackMode::Auto => RollbackSetting::Auto,
+                    ltbox_patch::rollback::RollbackMode::Off => RollbackSetting::Off,
+                    ltbox_patch::rollback::RollbackMode::Manual => RollbackSetting::Manual,
+                };
                 let cfg = self.wf_config.clone();
                 let conn = self.device.connection;
                 let device_model = self.device.model.clone();
@@ -407,7 +417,7 @@ impl App {
             FlashMsg::FlashConfirmSetRegion(r) => {
                 // TB322FC is PRC-only; the editor grays out ROW, but drop a
                 // stale dispatch defensively like the region card handler does.
-                if !(self.is_tb322fc() && r == DeviceRegion::Row) {
+                if !(self.model_capabilities().prc_only && r == DeviceRegion::Row) {
                     self.wf_config.device_region = Some(r);
                 }
                 self.confirm_edit_field = None;
@@ -416,7 +426,7 @@ impl App {
             FlashMsg::FlashConfirmSetTarget(t) => {
                 // Target ↔ region edit both map onto `modify_region`. TB322FC
                 // can't cross regions, so block OtherRegion defensively.
-                if !(self.is_tb322fc() && t == FlashTarget::OtherRegion) {
+                if !(self.model_capabilities().prc_only && t == FlashTarget::OtherRegion) {
                     self.wf_config.modify_region = t == FlashTarget::OtherRegion;
                 }
                 self.confirm_edit_field = None;
@@ -443,13 +453,17 @@ impl App {
                 // Region edit drives the same `modify_region` cross-region flag
                 // as the Target row, so apply the TB322FC PRC-only guard here
                 // too — otherwise this path bypasses the disabled Target option.
-                if !(self.is_tb322fc() && on) {
+                if !(self.model_capabilities().prc_only && on) {
                     self.wf_config.modify_region = on;
                 }
                 self.confirm_edit_field = None;
                 Task::none()
             }
             FlashMsg::FlashConfirmSetRollback(s) => {
+                if effective_rollback_mode(self.flash_rollback_policy(), s.to_mode()) != s.to_mode()
+                {
+                    return Task::none();
+                }
                 if s == RollbackSetting::Manual {
                     if self.flash.firmware_rollback_indices.is_some() {
                         self.open_manual_rollback_editor()
@@ -514,6 +528,13 @@ impl App {
                     return Task::none();
                 };
 
+                if effective_rollback_mode(
+                    self.flash_rollback_policy(),
+                    ltbox_patch::rollback::RollbackMode::Manual,
+                ) != ltbox_patch::rollback::RollbackMode::Manual
+                {
+                    return Task::none();
+                }
                 self.wf_config.modify_rollback = RollbackSetting::Manual;
                 self.wf_config.manual_rollback_indices = Some(ManualRollbackIndices {
                     boot: boot_index,
@@ -531,6 +552,88 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flash_rejects_disallowed_direct_rollback_selections() {
+        for (model, rejected) in [
+            (
+                "TB323FU",
+                vec![RollbackSetting::On, RollbackSetting::Manual],
+            ),
+            (
+                "TB376FC",
+                vec![
+                    RollbackSetting::On,
+                    RollbackSetting::Off,
+                    RollbackSetting::Manual,
+                ],
+            ),
+            (
+                "TB390FU",
+                vec![
+                    RollbackSetting::On,
+                    RollbackSetting::Off,
+                    RollbackSetting::Manual,
+                ],
+            ),
+        ] {
+            let mut app = App::default();
+            app.device.model = model.to_string();
+            app.wf_config.modify_rollback = RollbackSetting::Auto;
+            app.flash.firmware_rollback_indices = Some((Ok(1), Ok(1)));
+            for setting in rejected {
+                let _task = app.update_flash(FlashMsg::FlashConfirmSetRollback(setting));
+                assert_eq!(
+                    app.wf_config.modify_rollback,
+                    RollbackSetting::Auto,
+                    "{model}: {setting:?}"
+                );
+                assert!(app.manual_rollback_buffers.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn manual_confirmation_rechecks_changed_device_policy() {
+        for model in ["TB323FU", "TB376FC", "TB390FU"] {
+            let mut app = App::default();
+            app.device.model = "TB320FC".into();
+            app.flash.firmware_rollback_indices = Some((Ok(1), Ok(1)));
+            let _task =
+                app.update_flash(FlashMsg::FlashConfirmSetRollback(RollbackSetting::Manual));
+            assert!(app.manual_rollback_buffers.is_some());
+            app.device.model = model.into();
+            let _task = app.update_flash(FlashMsg::FlashManualRollbackConfirm);
+            assert_ne!(app.wf_config.modify_rollback, RollbackSetting::Manual);
+            assert!(app.wf_config.manual_rollback_indices.is_none());
+        }
+    }
+
+    #[test]
+    fn flash_generic_rollback_choices_remain_available() {
+        let mut app = App::default();
+        app.device.model = "TB320FC".to_string();
+        for setting in [
+            RollbackSetting::On,
+            RollbackSetting::Auto,
+            RollbackSetting::Off,
+        ] {
+            let _task = app.update_flash(FlashMsg::FlashConfirmSetRollback(setting));
+            assert_eq!(app.wf_config.modify_rollback, setting);
+        }
+        app.flash.firmware_rollback_indices = Some((Ok(1), Ok(1)));
+        let _task = app.update_flash(FlashMsg::FlashConfirmSetRollback(RollbackSetting::Manual));
+        assert!(app.manual_rollback_buffers.is_some());
+    }
+
+    #[test]
+    fn flash_execution_normalizes_stale_rollback_selection() {
+        let mut app = App::default();
+        app.device.model = "TB376FC".to_string();
+        app.wf_config.modify_rollback = RollbackSetting::Off;
+        let _task = app.update_flash(FlashMsg::FlashExecStart);
+        assert_eq!(app.wf_config.modify_rollback, RollbackSetting::Auto);
+    }
 
     fn started_lines(setting: RollbackSetting) -> Vec<String> {
         let mut app = App::default();

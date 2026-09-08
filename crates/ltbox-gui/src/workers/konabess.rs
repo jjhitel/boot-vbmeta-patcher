@@ -2,8 +2,8 @@
 //! selection, then rebuild and flash the AVB-matched image pair.
 
 use crate::{
-    ConnectionStatus, KonaBessPrepared, LiveLabels, PhaseReporter, fingerprint_token_match,
-    open_edl_session, prepare_tb323fu_efisp, provision_tb323fu_efisp, transition_to_edl,
+    ConnectionStatus, KonaBessPrepared, LiveLabels, PhaseReporter, open_edl_session,
+    prepare_tb323fu_efisp, provision_tb323fu_efisp, transition_to_edl,
 };
 use ltbox_core::{live, tr_args};
 use ltbox_patch::konabess::{GpuTable, KonaBessAvbOutput, KonaBessBuildStage, VendorBootDtbInfo};
@@ -28,8 +28,14 @@ enum ExploitGateKind {
     Tb323fuEfisp,
 }
 
-const fn exploit_gate_kind(is_tb323fu: bool) -> ExploitGateKind {
-    if is_tb323fu {
+fn exploit_gate_kind(
+    image_capabilities: Option<&ltbox_core::model::ModelCapabilities>,
+    fallback_uses_gbl: bool,
+) -> ExploitGateKind {
+    let uses_gbl = image_capabilities
+        .map(|capabilities| capabilities.root_uses_gbl)
+        .unwrap_or(fallback_uses_gbl);
+    if uses_gbl {
         ExploitGateKind::Tb323fuEfisp
     } else {
         ExploitGateKind::SignedVbmeta
@@ -65,7 +71,7 @@ trait KonaBessInspectionBackend {
 struct DeviceBackend<'a> {
     conn: ConnectionStatus,
     loader: &'a Path,
-    is_tb323fu: bool,
+    uses_gbl: bool,
     device_model: &'a str,
     phases: &'a PhaseReporter,
     session: Option<ltbox_device::edl::EdlSession>,
@@ -130,20 +136,22 @@ impl KonaBessInspectionBackend for DeviceBackend<'_> {
         work_dir: &Path,
         log: &mut Vec<String>,
     ) -> Result<(), String> {
-        let detected_xiaoxin = ltbox_patch::avb::extract_image_avb_info(vendor_boot)
+        let fingerprint = ltbox_patch::avb::extract_image_avb_info(vendor_boot)
             .ok()
-            .and_then(|info| ltbox_patch::avb::build_fingerprint(&info))
-            .is_some_and(|fingerprint| {
-                // Bidirectional SKU equivalence makes the TB376FC token match TB390FU too.
-                ltbox_core::model::fingerprint_model_match(
-                    &fingerprint,
-                    ltbox_core::model::TB376FC_MODEL,
-                )
-            });
-        if ltbox_core::model::is_xiaoxin_pro13_model(self.device_model) || detected_xiaoxin {
+            .and_then(|info| ltbox_patch::avb::build_fingerprint(&info));
+        let image_capabilities = fingerprint.as_deref().and_then(|fp| {
+            let mut profiles = ltbox_core::model::fingerprint_capabilities(fp);
+            let first = profiles.next();
+            profiles.find(|p| p.root_uses_gbl).or(first)
+        });
+        if !ltbox_core::model::capabilities(self.device_model).konabess
+            || fingerprint.as_deref().is_some_and(|fp| {
+                ltbox_core::model::fingerprint_capabilities(fp).any(|p| !p.konabess)
+            })
+        {
             return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
         }
-        match exploit_gate_kind(self.is_tb323fu) {
+        match exploit_gate_kind(image_capabilities, self.uses_gbl) {
             ExploitGateKind::Tb323fuEfisp => {
                 let efi_dir = work_dir.join("efisp_gbl");
                 let staged = prepare_tb323fu_efisp(
@@ -284,13 +292,13 @@ fn execute_inspection<B: KonaBessInspectionBackend>(
 pub(crate) fn konabess_inspection_worker(
     conn: ConnectionStatus,
     loader: PathBuf,
-    is_tb323fu: bool,
+    uses_gbl: bool,
     device_model: String,
     ll: LiveLabels,
     phases: PhaseReporter,
 ) -> Result<KonaBessInspectionResult, String> {
     let mut log = Vec::new();
-    if ltbox_core::model::is_xiaoxin_pro13_model(&device_model) {
+    if !ltbox_core::model::capabilities(&device_model).konabess {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
     let work_dir = ltbox_core::app_paths::work_dir_for("konabess");
@@ -304,7 +312,7 @@ pub(crate) fn konabess_inspection_worker(
     let mut backend = DeviceBackend {
         conn,
         loader: &loader,
-        is_tb323fu,
+        uses_gbl,
         device_model: &device_model,
         phases: &phases,
         session: None,
@@ -554,18 +562,17 @@ pub(crate) fn konabess_flash_worker(
     let prepared_fingerprint = ltbox_patch::avb::extract_image_avb_info(&prepared.vendor_boot)
         .ok()
         .and_then(|info| ltbox_patch::avb::build_fingerprint(&info));
-    // Bidirectional SKU equivalence makes the TB376FC token match TB390FU too.
-    let prepared_xiaoxin = prepared_fingerprint.as_deref().is_some_and(|fingerprint| {
-        ltbox_core::model::fingerprint_model_match(fingerprint, ltbox_core::model::TB376FC_MODEL)
-    });
-    if prepared_xiaoxin {
+    if prepared_fingerprint
+        .as_deref()
+        .is_some_and(|fp| ltbox_core::model::fingerprint_capabilities(fp).any(|p| !p.konabess))
+    {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
     // Read from the dumped image, not the connection: EDL reports no model, and
     // this decides whether the AVB chain is rebuilt at all.
     let gbl_verified = prepared_fingerprint
         .as_deref()
-        .is_some_and(|fingerprint| fingerprint_token_match(fingerprint, "TB323FU"));
+        .is_some_and(|fp| ltbox_core::model::fingerprint_capabilities(fp).any(|p| p.root_uses_gbl));
     let mut backend = FlashDeviceBackend {
         loader: &loader,
         session: None,
@@ -828,11 +835,37 @@ mod tests {
 
     #[test]
     fn tb323fu_empty_efisp_requires_provision_and_bypasses_avb_gate() {
-        assert_eq!(exploit_gate_kind(true), ExploitGateKind::Tb323fuEfisp);
-        assert_eq!(exploit_gate_kind(false), ExploitGateKind::SignedVbmeta);
+        assert_eq!(exploit_gate_kind(None, true), ExploitGateKind::Tb323fuEfisp);
+        assert_eq!(
+            exploit_gate_kind(None, false),
+            ExploitGateKind::SignedVbmeta
+        );
         assert!(crate::efisp_is_empty(&[0; 32]));
         assert!(!crate::efisp_is_empty(&[0, 0, 1, 0]));
         assert!(validate_signing_key(Some("fixed-or-unknown")).is_err());
+    }
+
+    #[test]
+    fn inspected_image_overrides_stale_exploit_route() {
+        let tb323fu = ltbox_core::model::capabilities_from_fingerprint(
+            "qti/TB323FU/TB323FU:15/build:user/release-keys",
+        );
+        assert_eq!(
+            exploit_gate_kind(tb323fu, false),
+            ExploitGateKind::Tb323fuEfisp
+        );
+        let tb320fc = ltbox_core::model::capabilities_from_fingerprint(
+            "qti/LAVIETab9QHD1/LAVIETab9QHD1:15/build:user/release-keys",
+        );
+        assert_eq!(
+            exploit_gate_kind(tb320fc, true),
+            ExploitGateKind::SignedVbmeta
+        );
+        let unknown = ltbox_core::model::capabilities_from_fingerprint("qti/unknown/build");
+        assert_eq!(
+            exploit_gate_kind(unknown, true),
+            ExploitGateKind::Tb323fuEfisp
+        );
     }
 
     #[test]

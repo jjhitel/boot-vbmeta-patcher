@@ -83,9 +83,7 @@ fn lenovo_firmware_device_policy(
 /// model from an EDL-dumped vendor_boot when fastboot/ADB never ran.
 /// LAVIE Tab 9QHD1 is represented by TB320FC because the shared matcher treats
 /// its reported token as equivalent and the recovered value is internal only.
-const SUPPORTED_MODELS: [&str; 8] = [
-    "TB320FC", "TB321FU", "TB322FC", "TB323FU", "TB376FC", "TB390FU", "TB520FU", "TB710FU",
-];
+use ltbox_core::model::{RollbackPolicy, SUPPORTED_MODELS, capabilities, fingerprint_capabilities};
 
 fn xiaoxin_pro13_token(text: &str) -> Option<&'static str> {
     [
@@ -233,7 +231,7 @@ fn read_edl_start_device(
     );
 
     // 2. TB322FC has no rollback protection — skip the index read.
-    if model_token.eq_ignore_ascii_case("TB322FC") {
+    if !capabilities(&model_token).rollback.is_protected() {
         return Ok(EdlStartProbe {
             model_token,
             rollback_floors: None,
@@ -263,7 +261,7 @@ fn read_edl_start_device(
     }
     let Some(floors) = rollback_floors(boot_idx, vbs_idx) else {
         return Err(ltbox_core::i18n::tr(
-            if ltbox_core::model::is_xiaoxin_pro13_model(&model_token) {
+            if capabilities(&model_token).rollback == RollbackPolicy::ReadOnly {
                 "err_flash_xiaoxin_arb_floor_unreadable"
             } else {
                 "err_flash_edl_avb_invalid"

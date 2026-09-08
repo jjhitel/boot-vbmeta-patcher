@@ -4,7 +4,7 @@
 
 use crate::{
     ConnectionStatus, PhaseReporter, UnrootType, find_edl_loader, open_edl_session,
-    root_skips_avb_postprocess, transition_to_edl,
+    transition_to_edl,
 };
 use ltbox_core::{i18n::tr, live, tr_args};
 
@@ -25,7 +25,7 @@ pub(crate) fn unroot_worker(
     // moves it: a user who was already in EDL stays there, anyone else goes back
     // to system.
     let edl_start = matches!(conn, ConnectionStatus::Edl);
-    if ltbox_core::model::is_xiaoxin_pro13_model(&device_model) {
+    if !ltbox_core::model::capabilities(&device_model).unroot {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
     let dir = std::path::Path::new(&folder);
@@ -52,11 +52,8 @@ pub(crate) fn unroot_worker(
     }
     if let Ok(info) = ltbox_patch::avb::extract_image_avb_info(&root_image_path)
         && let Some(fingerprint) = ltbox_patch::avb::build_fingerprint(&info)
-        // Bidirectional SKU equivalence makes the TB376FC token match TB390FU too.
-        && ltbox_core::model::fingerprint_model_match(
-            &fingerprint,
-            ltbox_core::model::TB376FC_MODEL,
-        )
+        && ltbox_core::model::fingerprint_capabilities(&fingerprint)
+            .any(|capabilities| !capabilities.unroot)
     {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
@@ -149,29 +146,30 @@ pub(crate) fn unroot_worker(
     // Nothing to compare on the testkey efisp/GBL route: its root run never ran
     // AVB post-processing, so the backup images hold no AVB metadata and the
     // pre-verification restore path is the correct one.
-    let (root_image_path, vbmeta_path) = if root_skips_avb_postprocess(&device_model) {
-        live!(log, "[Unroot] {}", tr("live_unroot_verify_skipped"));
-        (root_image_path, vbmeta_path)
-    } else {
-        match verify_against_device(
-            &mut session,
-            backup,
-            &slot,
-            &root_image_path,
-            vbmeta_path.as_deref(),
-            &mut log,
-        ) {
-            Ok(verified) => verified,
-            Err(error) => {
-                if edl_start {
-                    let _ = session.reset_to_edl(&mut log);
-                } else {
-                    let _ = session.reset(&mut log);
+    let (root_image_path, vbmeta_path) =
+        if ltbox_core::model::capabilities(&device_model).root_uses_gbl {
+            live!(log, "[Unroot] {}", tr("live_unroot_verify_skipped"));
+            (root_image_path, vbmeta_path)
+        } else {
+            match verify_against_device(
+                &mut session,
+                backup,
+                &slot,
+                &root_image_path,
+                vbmeta_path.as_deref(),
+                &mut log,
+            ) {
+                Ok(verified) => verified,
+                Err(error) => {
+                    if edl_start {
+                        let _ = session.reset_to_edl(&mut log);
+                    } else {
+                        let _ = session.reset(&mut log);
+                    }
+                    return Err(error);
                 }
-                return Err(error);
             }
-        }
-    };
+        };
 
     live!(log, "[Unroot] {} ({restored_label})", phases.marker(5));
     phases.mark_writes_started();

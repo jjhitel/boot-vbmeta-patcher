@@ -2989,7 +2989,7 @@ impl App {
     }
 
     /// The connected dual-USB-C model whose port guide is currently eligible
-    /// to open, or `None`. Eligible when the model is one of [`DUAL_USBC_MODELS`]
+    /// to open, or `None`. Eligible when the model has the dual-USB capability
     /// and the user has neither permanently dismissed ("don't show again")
     /// nor session-closed ("close") it.
     fn dual_usb_advisory_model(&self) -> Option<&str> {
@@ -3208,21 +3208,47 @@ impl App {
         true
     }
 
-    /// Classification of the polled device — the wizard's gating
-    /// branches (Root family availability, EDL loader manifest path,
-    /// region-flash availability) ask this enum directly instead of
-    /// pattern-matching the raw `device_model` string at every call
-    /// site. New SKUs add a variant here once; the existing `is_tbXXX`
-    /// methods are thin shims that delegate to this classifier.
-    fn device_class(&self) -> DeviceClass {
-        DeviceClass::from_model(&self.device.model)
+    /// The same model policy used by the workers and patch pipeline.
+    fn model_capabilities(&self) -> &'static ltbox_core::model::ModelCapabilities {
+        ltbox_core::model::capabilities(&self.device.model)
+    }
+
+    /// Firmware GBL policy follows the target; read-only rollback applies
+    /// whenever either the device or target requires it. Before the folder is
+    /// known, show the connected device's supported choices.
+    fn flash_rollback_policy(&self) -> ltbox_core::model::RollbackPolicy {
+        use ltbox_core::model::{RollbackPolicy, fingerprint_capabilities};
+        let device = self.model_capabilities().rollback;
+        let target = self
+            .flash
+            .firmware_identity
+            .as_ref()
+            .and_then(|identity| identity.fingerprint.as_deref())
+            .and_then(|fp| {
+                fingerprint_capabilities(fp)
+                    .map(|profile| profile.rollback)
+                    .reduce(|a, b| {
+                        if a == RollbackPolicy::ReadOnly || b == RollbackPolicy::ReadOnly {
+                            RollbackPolicy::ReadOnly
+                        } else if a == RollbackPolicy::Gbl || b == RollbackPolicy::Gbl {
+                            RollbackPolicy::Gbl
+                        } else {
+                            a
+                        }
+                    })
+            });
+        if device == RollbackPolicy::ReadOnly || target == Some(RollbackPolicy::ReadOnly) {
+            RollbackPolicy::ReadOnly
+        } else {
+            target.unwrap_or(device)
+        }
     }
 
     /// Whether the polled device follows the TB320FC hardware path. These model
     /// identities also target `boot` for Magisk and KernelSU LKM;
     /// LAVIE Tab 9QHD1 shares the same path.
     fn is_tb320fc(&self) -> bool {
-        self.device_class() == DeviceClass::TB320FC
+        ltbox_core::model::is_tb320fc_model(&self.device.model)
     }
 
     /// Whether the polled device is a TB323FU. Drives the multi-image
@@ -3234,7 +3260,7 @@ impl App {
     /// the same folder; if not, it aborts up front rather than
     /// failing mid-Sahara.
     fn is_tb323fu(&self) -> bool {
-        self.device_class() == DeviceClass::TB323FU
+        self.model_capabilities().requires_sahara_manifest
     }
 
     fn is_xiaoxin_pro13(&self) -> bool {
@@ -3247,7 +3273,7 @@ impl App {
     /// Inspects only the picked file's own extension, never the `.mbn` / `.elf`
     /// images a manifest references internally.
     fn loader_fits_model(&self, path: &std::path::Path) -> bool {
-        loader_ext_fits_model(self.is_tb323fu(), path)
+        loader_ext_fits_model(self.model_capabilities().requires_sahara_manifest, path)
     }
 
     /// True when the Settings default EDL loader is unset, or its extension fits
@@ -3314,7 +3340,7 @@ impl App {
     /// cannot pick a region or cross-region flash target that the
     /// hardware doesn't ship with.
     fn is_tb322fc(&self) -> bool {
-        self.device_class() == DeviceClass::TB322FC
+        self.model_capabilities().prc_only
     }
 
     /// True when the dashboard poll has placed the device in a mode

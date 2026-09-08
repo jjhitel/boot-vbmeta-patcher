@@ -2,65 +2,9 @@
 //! and the live connection state, split out of `main.rs`.
 
 use crate::theme::Palette;
-use ltbox_core::model::{LAVIE_TAB_9QHD1_MODEL, TB320FC_MODEL, is_tb320fc_model};
-
-/// Classifies the device model into a known SKU so wizard gates ask
-/// "what device class are we on?" once instead of comparing the raw
-/// `device_model` string at each call site.
-///
-/// `Generic` covers every supported Lenovo tablet that doesn't need a
-/// special branch — TB321FU (Legion Y700 2025), TB520FU (Yoga Pad Pro
-/// AI), TB710FU (XiaoxinPad Pro GT). They share the standard
-/// `xbl_s_devprg_ns.melf` loader and full ROW + OtherRegion flash flow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DeviceClass {
-    /// TB320FC — Legion Y700 2023 and the hardware-equivalent LAVIE Tab
-    /// 9QHD1. Ramdisk root targets `boot`; other special behavior is
-    /// selected through this shared device class.
-    TB320FC,
-    /// TB322FC — Legion Y700 Gen 4. Flash wizard hides ROW +
-    /// OtherRegion + non-CN country picks.
-    TB322FC,
-    /// TB323FU — Legion Y700 Gen 5. Requires the multi-image
-    /// `qsahara_device_programmer.xml` Sahara manifest rather than a
-    /// single `.melf` loader.
-    TB323FU,
-    /// Any other supported model. No special-case gates apply.
-    Generic,
-}
-
-impl DeviceClass {
-    pub(crate) fn from_model(model: &str) -> Self {
-        if is_tb320fc_model(model) {
-            Self::TB320FC
-        } else if model.eq_ignore_ascii_case("TB322FC") {
-            Self::TB322FC
-        } else if model.eq_ignore_ascii_case("TB323FU") {
-            Self::TB323FU
-        } else {
-            Self::Generic
-        }
-    }
-}
-
-/// Lenovo tablets that expose two USB-C ports. Only the port on the long
-/// edge carries the USB data lines EDL/ADB need; the short-edge port is
-/// charge-only on these SKUs, so LTBox advises the user to use the long-edge
-/// one. (TB321FU is included here even though it is not a `DeviceClass`
-/// special case — the advisory is about physical ports, not flash flow.)
-pub(crate) const DUAL_USBC_MODELS: [&str; 5] = [
-    TB320FC_MODEL,
-    LAVIE_TAB_9QHD1_MODEL,
-    "TB321FU",
-    "TB322FC",
-    "TB323FU",
-];
-
-/// Whether `model` is one of the [`DUAL_USBC_MODELS`] (case-insensitive).
+/// Whether the model needs the long-edge USB port advisory.
 pub(crate) fn is_dual_usbc_model(model: &str) -> bool {
-    DUAL_USBC_MODELS
-        .iter()
-        .any(|m| model.eq_ignore_ascii_case(m))
+    ltbox_core::model::capabilities(model).dual_usb
 }
 
 /// Whether a root run on `model` skips AVB post-processing entirely. TB323FU
@@ -68,10 +12,10 @@ pub(crate) fn is_dual_usbc_model(model: &str) -> bool {
 /// root run backs up carry no AVB metadata at all.
 ///
 /// Unroot therefore cannot compare such a backup against the device and has to
-/// restore it verbatim. **Any model added to that route must be added here too**
-/// — otherwise unroot reads its backup as unverifiable and refuses to flash.
+/// restore it verbatim. The shared capability profile keeps Root and Unroot
+/// on the same route when another model adopts this behavior.
 pub(crate) fn root_skips_avb_postprocess(model: &str) -> bool {
-    DeviceClass::from_model(model) == DeviceClass::TB323FU
+    ltbox_core::model::capabilities(model).root_uses_gbl
 }
 
 /// Every supported Lenovo tablet enforces AVB rollback protection EXCEPT the
@@ -81,21 +25,40 @@ pub(crate) fn root_skips_avb_postprocess(model: &str) -> bool {
 /// model is treated as protected — safer to read + honour the index than to
 /// skip and risk a rollback-rejected downgrade.
 pub(crate) fn is_rollback_protected_model(model: &str) -> bool {
-    !model.eq_ignore_ascii_case("TB322FC")
+    ltbox_core::model::capabilities(model)
+        .rollback
+        .is_protected()
+}
+
+/// Apply the model's existing rollback-mode restrictions. Shared by the
+/// confirm editor and worker, which also enforces newly discovered identities.
+pub(crate) fn effective_rollback_mode(
+    policy: ltbox_core::model::RollbackPolicy,
+    mode: ltbox_patch::rollback::RollbackMode,
+) -> ltbox_patch::rollback::RollbackMode {
+    use ltbox_core::model::RollbackPolicy;
+    use ltbox_patch::rollback::RollbackMode;
+    match (policy, mode) {
+        (RollbackPolicy::ReadOnly, _) => RollbackMode::Auto,
+        (RollbackPolicy::Gbl, RollbackMode::On) => RollbackMode::Auto,
+        (RollbackPolicy::Gbl, RollbackMode::Manual) => RollbackMode::Off,
+        _ => mode,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ltbox_core::model::LAVIE_TAB_9QHD1_MODEL;
 
     #[test]
     fn lavie_tab_9qhd1_inherits_tb320fc_device_behavior() {
         assert_eq!(
-            DeviceClass::from_model(LAVIE_TAB_9QHD1_MODEL),
-            DeviceClass::TB320FC
+            ltbox_core::model::capabilities(LAVIE_TAB_9QHD1_MODEL),
+            ltbox_core::model::capabilities(ltbox_core::model::TB320FC_MODEL)
         );
         assert!(is_dual_usbc_model(LAVIE_TAB_9QHD1_MODEL));
-        assert_eq!(DeviceClass::from_model("TB323FU"), DeviceClass::TB323FU);
+        assert!(ltbox_core::model::capabilities("TB323FU").root_uses_gbl);
         assert!(!is_dual_usbc_model("TB330FU"));
     }
 

@@ -317,24 +317,38 @@ pub(crate) fn flash_worker(
     // TB323FU keeps region vendor_boot/vbmeta AVB conversion off (it
     // provisions a GBL on efisp instead) but DOES take ARB
     // overlays. Region detect uses fp first, then model.
-    let tb323fu_skip_region = firmware_fingerprint
-        .as_deref()
-        .map(|fp| fingerprint_token_match(fp, "TB323FU"))
-        .unwrap_or(false)
-        || fingerprint_token_match(&device_model, "TB323FU");
+    let device_caps = capabilities(&device_model);
+    let firmware_caps = || {
+        firmware_fingerprint
+            .as_deref()
+            .into_iter()
+            .flat_map(fingerprint_capabilities)
+    };
+    let tb323fu_skip_region = device_caps.rollback == RollbackPolicy::Gbl
+        || firmware_caps().any(|caps| caps.rollback == RollbackPolicy::Gbl);
 
-    // GBL/ARB work follows the TARGET firmware identity
-    // (vendor_boot fp), never the connected device.
-    let target_is_tb323fu = firmware_fingerprint
-        .as_deref()
-        .map(|fp| fingerprint_token_match(fp, "TB323FU"))
-        .unwrap_or(false);
+    // GBL provisioning follows only the target firmware, never device identity.
+    let target_is_tb323fu = firmware_caps().any(|caps| caps.rollback == RollbackPolicy::Gbl);
     let xiaoxin_skip_region = xiaoxin_pro13_token(&device_model).is_some()
         || firmware_fingerprint
             .as_deref()
             .and_then(xiaoxin_pro13_token)
-            .is_some();
+            .is_some()
+        || device_caps.rollback == RollbackPolicy::ReadOnly
+        || firmware_caps().any(|caps| caps.rollback == RollbackPolicy::ReadOnly);
+    let skip_region_conversion = xiaoxin_skip_region
+        || !device_caps.region_avb_conversion
+        || firmware_caps().any(|caps| !caps.region_avb_conversion);
     let mut xiaoxin_pro13_flash = xiaoxin_skip_region;
+    if (device_caps.prc_only || firmware_caps().any(|caps| caps.prc_only))
+        && (cfg.modify_region
+            || cfg
+                .country_action
+                .target()
+                .is_some_and(|country| !country.eq_ignore_ascii_case("CN")))
+    {
+        return Err(ltbox_core::i18n::tr("err_flash_tb322fc_prc_only"));
+    }
 
     // EDL-start no longer forces rollback-bypass (or region) off. The device
     // model and committed rollback index are read by dumping vendor_boot +
@@ -349,14 +363,14 @@ pub(crate) fn flash_worker(
     // the EDL-dumped device index decides per partition.
     if target_is_tb323fu && rb_mode != ltbox_patch::rollback::RollbackMode::Off {
         if rb_mode == ltbox_patch::rollback::RollbackMode::On {
-            rb_mode = ltbox_patch::rollback::RollbackMode::Auto;
+            rb_mode = crate::effective_rollback_mode(RollbackPolicy::Gbl, rb_mode);
             ltbox_core::live!(
                 log,
                 "[ARB] {}",
                 ltbox_core::i18n::tr("live_flash_tb323fu_force_auto")
             );
         } else if rb_mode == ltbox_patch::rollback::RollbackMode::Manual {
-            rb_mode = ltbox_patch::rollback::RollbackMode::Off;
+            rb_mode = crate::effective_rollback_mode(RollbackPolicy::Gbl, rb_mode);
             ltbox_core::live!(
                 log,
                 "[ARB] {}",
@@ -365,7 +379,7 @@ pub(crate) fn flash_worker(
         }
     }
     if xiaoxin_pro13_flash && rb_mode != ltbox_patch::rollback::RollbackMode::Auto {
-        rb_mode = ltbox_patch::rollback::RollbackMode::Auto;
+        rb_mode = crate::effective_rollback_mode(RollbackPolicy::ReadOnly, rb_mode);
         ltbox_core::live!(
             log,
             "[ARB] {}",
@@ -500,8 +514,7 @@ pub(crate) fn flash_worker(
     //    (testkey device) or an abort (Lenovo-key device).
     let mut region_pair: Option<ltbox_patch::region::RegionAvbOutput> = None;
     if cfg.modify_region
-        && !tb323fu_skip_region
-        && !xiaoxin_skip_region
+        && !skip_region_conversion
         && fw_key_class != ltbox_patch::key_map::KeyClass::Lenovo
     {
         if has_vendor_boot && has_vbmeta {
@@ -729,11 +742,12 @@ pub(crate) fn flash_worker(
         match read_edl_start_device(&mut session, firmware_fingerprint.as_deref(), &mut log) {
             Ok(probe) => {
                 device_model = probe.model_token;
-                if !xiaoxin_pro13_flash && ltbox_core::model::is_xiaoxin_pro13_model(&device_model)
+                if !xiaoxin_pro13_flash
+                    && capabilities(&device_model).rollback == RollbackPolicy::ReadOnly
                 {
                     xiaoxin_pro13_flash = true;
                     if rb_mode != ltbox_patch::rollback::RollbackMode::Auto {
-                        rb_mode = ltbox_patch::rollback::RollbackMode::Auto;
+                        rb_mode = crate::effective_rollback_mode(RollbackPolicy::ReadOnly, rb_mode);
                         ltbox_core::live!(
                             log,
                             "[ARB] {}",

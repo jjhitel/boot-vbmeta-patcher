@@ -69,7 +69,7 @@ pub(crate) fn root_worker(
     phases: PhaseReporter,
 ) -> Result<Vec<String>, String> {
     let mut log = Vec::new();
-    if ltbox_core::model::is_xiaoxin_pro13_model(&device_model) {
+    if !ltbox_core::model::capabilities(&device_model).root {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
     let skip_adb = conn.skip_adb();
@@ -77,6 +77,9 @@ pub(crate) fn root_worker(
     // GKI route: AnyKernel3 zip is the full input —
     // no provider / version / GitHub fetch.
     let is_gki_route = mode == Some(RootMode::Gki);
+    if is_gki_route && !ltbox_core::model::capabilities(&device_model).gki_root {
+        return Err(tr_args!("model_unsupported", model = "TB323FU"));
+    }
     let family = family.ok_or_else(|| tr("err_root_family_missing"))?;
     let is_skroot_route = family == Family::Skroot;
     let (provider, version) =
@@ -345,7 +348,7 @@ pub(crate) fn root_worker(
             let backup_dir: std::path::PathBuf;
             // Set inside the dump block from the dumped root image's
             // fingerprint; carried to Phase 5 to skip AVB + vbmeta.
-            let is_tb323fu;
+            let uses_gbl;
             // Whether the stock vbmeta ended up in the backup folder, so the
             // manifest can tell Unroot which partitions to restore.
             let vbmeta_backed_up;
@@ -402,12 +405,13 @@ pub(crate) fn root_worker(
                             image = root_image_name
                         )
                     })?;
-                // Bidirectional SKU equivalence makes the TB376FC token match TB390FU too.
-                if ltbox_core::model::fingerprint_model_match(
-                    &root_image_fingerprint,
-                    ltbox_core::model::TB376FC_MODEL,
-                ) {
+                let image_capabilities =
+                    || ltbox_core::model::fingerprint_capabilities(&root_image_fingerprint);
+                if image_capabilities().any(|capabilities| !capabilities.root) {
                     return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
+                }
+                if is_gki_route && image_capabilities().any(|capabilities| !capabilities.gki_root) {
+                    return Err(tr_args!("model_unsupported", model = "TB323FU"));
                 }
                 if !fingerprint_matches_detected_model(&root_image_fingerprint, &device_model) {
                     return Err(tr_args!(
@@ -416,12 +420,12 @@ pub(crate) fn root_worker(
                         fingerprint = root_image_fingerprint
                     ));
                 }
-                is_tb323fu = fingerprint_token_match(&root_image_fingerprint, "TB323FU");
+                uses_gbl = image_capabilities().any(|capabilities| capabilities.root_uses_gbl);
 
                 // vbmeta is read only when the run rebuilds it: TB323FU takes
                 // the GBL route, and every other non-TB320FC model chains the
                 // boot target, which leaves vbmeta byte-identical either way.
-                vbmeta_backed_up = rebuild_vbmeta && !is_tb323fu;
+                vbmeta_backed_up = rebuild_vbmeta && !uses_gbl;
                 if vbmeta_backed_up {
                     session
                         .dump_partition(
@@ -443,7 +447,7 @@ pub(crate) fn root_worker(
                 // TB323FU root needs provisioned efisp; once present, skip AVB
                 // footer and vbmeta writes. Keep the verified fingerprint so
                 // an empty efisp can fetch the matching region GBL.
-                if is_tb323fu {
+                if uses_gbl {
                     let efi_dir = ltbox_core::app_paths::work_dir_for("root_efisp");
                     root_efisp_efi = prepare_tb323fu_efisp(
                         &mut session,
@@ -541,7 +545,7 @@ pub(crate) fn root_worker(
             // keeps the two phases in lockstep automatically
             // if a future field gets added to the struct.
             let cfg = manager_cfg.clone();
-            let artifacts = build_patched_artifacts(&cfg, is_tb323fu, &mut log)
+            let artifacts = build_patched_artifacts(&cfg, uses_gbl, &mut log)
                 .map_err(|e| tr_args!("err_root_patch_failed", error = e))?;
             if manager_apk.is_none() {
                 manager_apk = artifacts.manager_apk.clone();
@@ -711,6 +715,61 @@ fn should_reset_after_root_device_error(writes_started: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_model_workers_reject_before_inputs_or_device_access() {
+        let app = crate::App::default();
+        let phases = || PhaseReporter::from_labels(vec!["prepare".into()]);
+        for model in ["TB376FC", "TB390FU", "TB323FU"] {
+            let result = root_worker(
+                None,
+                Some(RootMode::Gki),
+                None,
+                None,
+                None,
+                None,
+                model.into(),
+                ConnectionStatus::None,
+                None,
+                Vec::new(),
+                String::new(),
+                None,
+                String::new(),
+                app.live_labels(),
+                phases(),
+            );
+            let blocked = if model == "TB323FU" {
+                "TB323FU"
+            } else {
+                "TB376FC / TB390FU"
+            };
+            assert_eq!(
+                result.unwrap_err(),
+                tr_args!("model_unsupported", model = blocked)
+            );
+        }
+        for model in ["TB376FC", "TB390FU"] {
+            let expected = tr_args!("model_unsupported", model = "TB376FC / TB390FU");
+            let result = super::super::unroot::unroot_worker(
+                String::new(),
+                crate::UnrootType::MagiskLkm,
+                None,
+                model.into(),
+                ConnectionStatus::None,
+                phases(),
+            );
+            assert_eq!(result.unwrap_err(), expected);
+            let result = super::super::konabess::konabess_inspection_worker(
+                ConnectionStatus::None,
+                std::path::PathBuf::new(),
+                false,
+                model.into(),
+                app.live_labels(),
+                phases(),
+            );
+            assert_eq!(result.unwrap_err(), expected);
+        }
+    }
 
     #[test]
     fn pre_write_failures_still_reset() {

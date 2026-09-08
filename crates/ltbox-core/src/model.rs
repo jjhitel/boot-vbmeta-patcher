@@ -1,5 +1,11 @@
 //! Device-model identity shared across LTBox crates.
 
+mod capabilities;
+pub use capabilities::{
+    ModelCapabilities, RollbackPolicy, SUPPORTED_MODELS, capabilities,
+    capabilities_from_fingerprint, fingerprint_capabilities,
+};
+
 /// Model token reported by Legion Tab Y700 (2023) firmware.
 pub const TB320FC_MODEL: &str = "TB320FC";
 

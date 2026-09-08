@@ -85,7 +85,7 @@ impl App {
         // TB322FC is a PRC-only SKU. Render ROW as a disabled card with
         // a grayed icon so the constraint is visible — silent skip
         // would confuse users who expect both options.
-        let tb322fc = self.is_tb322fc();
+        let tb322fc = self.model_capabilities().prc_only;
         let unsupported_tb322fc = tr_args!("model_unsupported", model = "TB322FC");
         let row_card: Element<'_, Message> = if tb322fc {
             icon_option_card_sub_square_disabled_sized(
@@ -156,7 +156,7 @@ impl App {
         // TB322FC ships only in PRC, so cross-region (OtherRegion) is
         // never a valid target. Disable the card with a grayed icon to
         // keep the constraint visible on the picker.
-        let tb322fc = self.is_tb322fc();
+        let tb322fc = self.model_capabilities().prc_only;
         let unsupported_tb322fc = tr_args!("model_unsupported", model = "TB322FC");
         // Region-aware target descriptions spell out the hardware market and
         // the ROM being installed so users don't conflate the two (the most

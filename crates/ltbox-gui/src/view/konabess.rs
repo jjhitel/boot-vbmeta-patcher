@@ -30,8 +30,7 @@ impl App {
 
         let nav: Element<'_, Message> = if konabess_nav_visible(self.konabess.step) {
             let is_confirm = self.konabess.step == 2;
-            let unsupported = self
-                .is_xiaoxin_pro13()
+            let unsupported = (!ltbox_core::model::capabilities(&self.device.model).konabess)
                 .then(|| tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
             let label = if is_confirm {
                 self.t("btn_start")
@@ -43,7 +42,7 @@ impl App {
                     label,
                     self.konabess.can_next()
                         && !self.operation.is_running()
-                        && !self.is_xiaoxin_pro13(),
+                        && ltbox_core::model::capabilities(&self.device.model).konabess,
                     unsupported,
                     self.t("btn_cancel"),
                     Message::KonaBess(KonaBessMsg::KonaBessBack),
@@ -55,7 +54,7 @@ impl App {
                     label,
                     self.konabess.can_next()
                         && !self.operation.is_running()
-                        && !self.is_xiaoxin_pro13(),
+                        && ltbox_core::model::capabilities(&self.device.model).konabess,
                     unsupported,
                     self.t("btn_back"),
                     Message::KonaBess(KonaBessMsg::KonaBessBack),

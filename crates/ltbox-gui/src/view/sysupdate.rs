@@ -103,9 +103,8 @@ impl App {
         // TB323FU's vendor_boot/vbmeta sit on a different UFS LUN than the
         // Boot Recovery worker targets, so the flow can't run on it — disable
         // the row (alongside the non-Qualcomm platform gate).
-        let rescue_disabled = self.device.platform_supported == Some(false)
-            || self.is_tb323fu()
-            || self.is_xiaoxin_pro13();
+        let rescue_disabled =
+            self.device.platform_supported == Some(false) || !self.model_capabilities().rescue;
         // Gray the icon when disabled, matching the other wizards' disabled
         // list rows.
         let rescue_icon = if rescue_disabled {

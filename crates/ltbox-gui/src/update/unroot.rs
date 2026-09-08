@@ -7,7 +7,7 @@ impl App {
     pub(crate) fn update_unroot(&mut self, msg: UnrootMsg) -> Task<Message> {
         match msg {
             UnrootMsg::SetUnrootType(t) => {
-                if self.is_xiaoxin_pro13() {
+                if !ltbox_core::model::capabilities(&self.device.model).unroot {
                     return Task::none();
                 }
                 self.unroot.unroot_type = Some(t);
@@ -56,7 +56,7 @@ impl App {
                 Task::none()
             }
             UnrootMsg::UnrootExecStart => {
-                if self.is_xiaoxin_pro13() {
+                if !ltbox_core::model::capabilities(&self.device.model).unroot {
                     self.error_msg =
                         Some(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
                     return Task::none();

@@ -1243,7 +1243,7 @@ impl App {
         // rows render as disabled buttons so the constraint stays visible. The
         // Advanced "Change Country Code" op has no such restriction (any country,
         // any model), so the gate is lifted there. "Do not change" stays usable.
-        let tb322fc = self.is_tb322fc() && !self.adv_needs_country;
+        let tb322fc = self.model_capabilities().prc_only && !self.adv_needs_country;
         for entry in COUNTRY_CODES {
             let code = entry.code.to_string();
             let selected = selected_code == Some(entry.code);
@@ -1364,7 +1364,7 @@ impl App {
     pub(crate) fn flash_confirm_edit_popup(&self, field: ConfirmField) -> Element<'_, Message> {
         // (label, selected, on_press, disabled)
         let cfg = &self.wf_config;
-        let tb322 = self.is_tb322fc();
+        let tb322 = self.model_capabilities().prc_only;
         let opts: Vec<(String, bool, Message, bool)> = match field {
             ConfirmField::Region => [DeviceRegion::Prc, DeviceRegion::Row]
                 .into_iter()
@@ -1440,7 +1440,8 @@ impl App {
                     .to_string(),
                     cfg.modify_rollback == s,
                     Message::Flash(FlashMsg::FlashConfirmSetRollback(s)),
-                    false,
+                    effective_rollback_mode(self.flash_rollback_policy(), s.to_mode())
+                        != s.to_mode(),
                 )
             })
             .collect(),
