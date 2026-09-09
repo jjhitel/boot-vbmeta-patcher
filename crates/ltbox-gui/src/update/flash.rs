@@ -100,6 +100,17 @@ impl App {
                 Task::none()
             }
             FlashMsg::FlashNext => {
+                if self.flash.current_step() == FlashStep::Bootloader {
+                    if !self.flash.bootloader_can_next() {
+                        return Task::none();
+                    }
+                    self.flash.record_bootloader_decision();
+                }
+                if self.flash.current_step() == FlashStep::Confirm
+                    && !self.flash.bootloader_execution_allowed()
+                {
+                    return Task::none();
+                }
                 // Data step → build WorkflowConfig; wipe opens country popup.
                 if self.flash.current_step() == FlashStep::Data {
                     self.wf_config = WorkflowConfig {
@@ -128,6 +139,7 @@ impl App {
                         return Task::none();
                     };
                     self.flash.firmware_identity = None;
+                    self.flash.no_efisp_load = false;
                     self.flash.firmware_identity_pending = true;
                     self.flash.firmware_identity_dialog = None;
                     let inspected_folder = folder.clone();
@@ -136,7 +148,17 @@ impl App {
                             tokio::task::spawn_blocking(move || {
                                 let image = std::path::Path::new(&folder).join("vbmeta_system.img");
                                 ltbox_patch::avb::extract_image_avb_info(&image)
-                                    .map(|info| FirmwareIdentity::from_avb_info(&info))
+                                    .map(|info| {
+                                        let mut identity = FirmwareIdentity::from_avb_info(&info);
+                                        identity.efisp_load = std::fs::read(
+                                            std::path::Path::new(&folder).join("abl.elf"),
+                                        )
+                                        .map(|data| ltbox_patch::efisp_load::detect(&data))
+                                        .unwrap_or(
+                                            ltbox_patch::efisp_load::EfispLoad::Undetermined,
+                                        );
+                                        identity
+                                    })
                                     .map_err(|error| error.to_string())
                             })
                             .await
@@ -213,13 +235,9 @@ impl App {
                 self.flash.firmware_identity_pending = false;
                 match result {
                     Ok(identity) => {
-                        if !firmware_needs_bootloader_step(
-                            identity.key_class,
-                            identity.fingerprint.as_deref(),
-                        ) {
-                            self.flash.user_abl_path = None;
-                            self.flash.user_abl_key_class = None;
-                            self.flash.user_abl_analyzing = false;
+                        self.flash.no_efisp_load = false;
+                        if !identity.needs_bootloader_step() {
+                            self.flash.clear_bootloader();
                         }
                         self.flash.firmware_identity = Some(identity);
                         self.flash.firmware_identity_dialog = Some(FirmwareIdentityDialog::Ready);
@@ -257,6 +275,7 @@ impl App {
                     return Task::none();
                 };
                 self.remember_recent(pickers::PickerKind::File, &path);
+                self.flash.clear_bootloader();
                 self.flash.user_abl_path = Some(path.clone());
                 self.flash.user_abl_key_class = None;
                 self.flash.user_abl_analyzing = true;
@@ -264,34 +283,47 @@ impl App {
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            ltbox_patch::abl_key::extract_abl_avb_pubkey_sha1(std::path::Path::new(
-                                &path,
-                            ))
+                            let key_class = ltbox_patch::abl_key::extract_abl_avb_pubkey_sha1(
+                                std::path::Path::new(&path),
+                            )
                             .map(|sha1| ltbox_patch::key_map::classify_pubkey(Some(&sha1)))
-                            .unwrap_or(ltbox_patch::key_map::KeyClass::Unknown)
+                            .unwrap_or(ltbox_patch::key_map::KeyClass::Unknown);
+                            let efisp_load = std::fs::read(&path)
+                                .map(|data| ltbox_patch::efisp_load::detect(&data))
+                                .unwrap_or(ltbox_patch::efisp_load::EfispLoad::Undetermined);
+                            (key_class, efisp_load)
                         })
                         .await
-                        .unwrap_or(ltbox_patch::key_map::KeyClass::Unknown)
+                        .unwrap_or((
+                            ltbox_patch::key_map::KeyClass::Unknown,
+                            ltbox_patch::efisp_load::EfispLoad::Undetermined,
+                        ))
                     },
-                    move |key_class| {
-                        Message::Flash(FlashMsg::FlashBootloaderAnalysed(analysed_path, key_class))
+                    move |(key_class, efisp_load)| {
+                        Message::Flash(FlashMsg::FlashBootloaderAnalysed(
+                            analysed_path,
+                            key_class,
+                            efisp_load,
+                        ))
                     },
                 )
             }
-            FlashMsg::FlashBootloaderAnalysed(path, key_class) => {
+            FlashMsg::FlashBootloaderAnalysed(path, key_class, efisp_load) => {
                 if self.flash.user_abl_path.as_deref() == Some(path.as_str()) {
                     self.flash.user_abl_key_class = Some(key_class);
+                    self.flash.user_abl_efisp_load = efisp_load;
                     self.flash.user_abl_analyzing = false;
                 }
                 Task::none()
             }
             FlashMsg::FlashClearBootloader => {
-                self.flash.user_abl_path = None;
-                self.flash.user_abl_key_class = None;
-                self.flash.user_abl_analyzing = false;
+                self.flash.clear_bootloader();
                 Task::none()
             }
             FlashMsg::FlashExecStart => {
+                if !self.flash.bootloader_execution_allowed() {
+                    return Task::none();
+                }
                 #[cfg(feature = "demo")]
                 if demo::blocks_flash_execution(self) {
                     return Task::none();
@@ -314,11 +346,8 @@ impl App {
                 let fw_folder = self.flash.firmware_folder.clone().unwrap_or_default();
                 let loader_override = self.flash.loader_override.clone();
                 let firmware_identity = self.flash.firmware_identity.clone();
-                let user_abl_path = (!self.flash.user_abl_analyzing
-                    && self.flash.user_abl_key_class
-                        == Some(ltbox_patch::key_map::KeyClass::Testkey))
-                .then(|| self.flash.user_abl_path.clone())
-                .flatten();
+                let user_abl_path = self.flash.user_abl_path.clone();
+                let no_efisp_load = self.flash.no_efisp_load;
                 // `None` on every setting but Manual, and the worker refuses a
                 // Manual run that has no targets with a message the user can
                 // read. Bailing here instead left the phased op running with
@@ -371,6 +400,7 @@ impl App {
                                     loader_override,
                                     firmware_identity,
                                     user_abl_path,
+                                    no_efisp_load,
                                     rb_mode,
                                     manual_indices,
                                     ll,
@@ -630,6 +660,78 @@ mod tests {
         app.flash.firmware_rollback_indices = Some((Ok(1), Ok(1)));
         let _task = app.update_flash(FlashMsg::FlashConfirmSetRollback(RollbackSetting::Manual));
         assert!(app.manual_rollback_buffers.is_some());
+    }
+
+    fn canoe_app(efisp_load: ltbox_patch::efisp_load::EfispLoad) -> App {
+        let mut app = App::default();
+        app.flash.firmware_identity = Some(FirmwareIdentity {
+            efisp_load,
+            key_class: ltbox_patch::key_map::KeyClass::Lenovo,
+            fingerprint: Some("qti/TB323FU/TB323FU:15/build:user/release-keys".into()),
+            model_token: Some("TB323FU".into()),
+        });
+        app.flash.firmware_folder = Some("firmware".into());
+        app.flash.set_step(FlashStep::Bootloader);
+        app
+    }
+
+    #[test]
+    fn stale_bootloader_actions_cannot_skip_required_or_invalid_abl() {
+        use ltbox_patch::efisp_load::EfispLoad::{No, Undetermined};
+        for state in [No, Undetermined] {
+            let mut app = canoe_app(state);
+            if state == No {
+                app.flash.user_abl_path = Some("invalid.elf".into());
+                app.flash.user_abl_key_class = Some(ltbox_patch::key_map::KeyClass::Testkey);
+                app.flash.user_abl_efisp_load = No;
+            }
+            let _task = app.update_flash(FlashMsg::FlashNext);
+            assert_eq!(app.flash.current_step(), FlashStep::Bootloader);
+            assert!(!app.flash.no_efisp_load);
+            app.flash.set_step(FlashStep::Confirm);
+            let _task = app.update_flash(FlashMsg::FlashNext);
+            assert_eq!(app.flash.current_step(), FlashStep::Confirm);
+            let before = app.log_lines.clone();
+            let _task = app.update_flash(FlashMsg::FlashExecStart);
+            assert_eq!(app.log_lines, before);
+        }
+    }
+
+    #[test]
+    fn no_efisp_decision_is_explicit_and_cleared_on_selection_changes() {
+        use ltbox_patch::efisp_load::EfispLoad::{No, Undetermined, Yes};
+        let mut app = canoe_app(No);
+        let before = app.log_lines.clone();
+        let _task = app.update_flash(FlashMsg::FlashExecStart);
+        assert_eq!(app.log_lines, before);
+        let _task = app.update_flash(FlashMsg::FlashNext);
+        assert_eq!(app.flash.current_step(), FlashStep::Confirm);
+        assert!(app.flash.no_efisp_load);
+        assert!(app.flash.bootloader_execution_allowed());
+        let _task = app.update_flash(FlashMsg::FlashBack);
+        let _task = app.update_flash(FlashMsg::FlashBootloaderChosen(Some("new.elf".into())));
+        assert!(!app.flash.no_efisp_load);
+        assert_eq!(app.flash.user_abl_efisp_load, Undetermined);
+        let _task = app.update_flash(FlashMsg::FlashBootloaderAnalysed(
+            "old.elf".into(),
+            ltbox_patch::key_map::KeyClass::Testkey,
+            Yes,
+        ));
+        assert_eq!(app.flash.user_abl_efisp_load, Undetermined);
+        let _task = app.update_flash(FlashMsg::FlashBootloaderAnalysed(
+            "new.elf".into(),
+            ltbox_patch::key_map::KeyClass::Lenovo,
+            Yes,
+        ));
+        let _task = app.update_flash(FlashMsg::FlashNext);
+        assert!(!app.flash.no_efisp_load);
+        assert_eq!(app.flash.current_step(), FlashStep::Confirm);
+        let _task = app.update_flash(FlashMsg::FlashClearBootloader);
+        assert!(!app.flash.no_efisp_load);
+        assert!(!app.flash.bootloader_execution_allowed());
+        let _task = app.update_flash(FlashMsg::FlashBack);
+        let _task = app.update_flash(FlashMsg::FlashNext);
+        assert!(app.flash.no_efisp_load);
     }
 
     #[test]

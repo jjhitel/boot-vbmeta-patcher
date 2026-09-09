@@ -20,6 +20,8 @@ getrandom = { workspace = true }
 zip = { workspace = true }
 fs-err = { workspace = true }
 lzma-rust2 = { workspace = true }
+# The ABL detector matches Python/liblzma's strict stream-end validation.
+xz2 = { version = "0.1.7", features = ["static"] }
 
 [dev-dependencies]
 tempfile = "3"

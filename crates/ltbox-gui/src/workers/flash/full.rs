@@ -11,6 +11,7 @@ pub(crate) fn flash_worker(
     loader_override: Option<String>,
     firmware_identity: Option<FirmwareIdentity>,
     user_abl_path: Option<String>,
+    no_efisp_load: bool,
     mut rb_mode: ltbox_patch::rollback::RollbackMode,
     manual_rollback_indices: Option<ManualRollbackIndices>,
     ll: LiveLabels,
@@ -20,6 +21,9 @@ pub(crate) fn flash_worker(
     let edl_start = matches!(conn, ConnectionStatus::Edl);
     let started_in_fastboot = matches!(conn, ConnectionStatus::Fastboot);
     let fw_dir = std::path::Path::new(&fw_folder);
+    let target_is_canoe = firmware_identity
+        .as_ref()
+        .is_some_and(FirmwareIdentity::uses_gbl);
     let (fw_key_class, firmware_fingerprint) = firmware_identity
         .map(|identity| (identity.key_class, identity.fingerprint))
         .unwrap_or((
@@ -51,6 +55,47 @@ pub(crate) fn flash_worker(
     // Phase 2/9 — Decompress packaged images.
     live!(log, "[Flash] {}", phases.marker(2));
     decompress_zst_images(fw_dir, &mut log)?;
+
+    // Validate ABL again in the worker, before opening a device. GUI results
+    // can be stale or absent. A replacement is copied to private staging so
+    // the exact bytes approved here are the bytes overlaid after rawprogram.
+    let mut canoe_abl_stage = None;
+    let mut canoe_abl_snapshot = None;
+    if target_is_canoe {
+        let firmware_abl = std::fs::read(fw_dir.join("abl.elf")).ok();
+        let firmware_load = firmware_abl
+            .as_deref()
+            .map(ltbox_patch::efisp_load::detect)
+            .unwrap_or_default();
+        let selected = user_abl.as_ref().map(std::fs::read);
+        let selected_load = selected.as_ref().map(|data| {
+            data.as_ref()
+                .map(|bytes| ltbox_patch::efisp_load::detect(bytes))
+                .unwrap_or_default()
+        });
+        validate_canoe_efisp_choice(firmware_load, selected_load, no_efisp_load)?;
+        if let Some(Ok(bytes)) = selected {
+            let stage =
+                tempfile::tempdir().map_err(|e| tr_args!("err_arb_work_dir_failed", error = e))?;
+            let path = stage.path().join("abl.elf");
+            std::fs::write(&path, bytes)
+                .map_err(|e| tr_args!("err_arb_work_dir_failed", error = e))?;
+            canoe_abl_stage = Some((stage, path));
+        } else {
+            canoe_abl_snapshot = firmware_abl;
+        }
+        if no_efisp_load {
+            // Manual targets can be rejected using only firmware input.
+            if rb_mode == ltbox_patch::rollback::RollbackMode::Manual {
+                let firmware = firmware_rollback_indices(fw_dir)?;
+                if manual_rollback_indices != Some(firmware) {
+                    return Err(ltbox_core::i18n::tr("err_flash_no_efisp_rollback"));
+                }
+            }
+        }
+    } else if no_efisp_load {
+        return Err(ltbox_core::i18n::tr("err_abl_efisp_undetermined"));
+    }
 
     // Phase 3/9 — Inspect device and firmware compatibility.
     live!(log, "[Flash] {}", phases.marker(3));
@@ -325,11 +370,11 @@ pub(crate) fn flash_worker(
             .into_iter()
             .flat_map(fingerprint_capabilities)
     };
-    let tb323fu_skip_region = device_caps.rollback == RollbackPolicy::Gbl
+    let canoe_skip_region = device_caps.rollback == RollbackPolicy::Gbl
         || firmware_caps().any(|caps| caps.rollback == RollbackPolicy::Gbl);
 
     // GBL provisioning follows only the target firmware, never device identity.
-    let target_is_tb323fu = firmware_caps().any(|caps| caps.rollback == RollbackPolicy::Gbl);
+    // `target_is_canoe` was resolved before device access for ABL validation.
     let xiaoxin_skip_region = xiaoxin_pro13_token(&device_model).is_some()
         || firmware_fingerprint
             .as_deref()
@@ -348,7 +393,10 @@ pub(crate) fn flash_worker(
                 .target()
                 .is_some_and(|country| !country.eq_ignore_ascii_case("CN")))
     {
-        return Err(ltbox_core::i18n::tr("err_flash_tb322fc_prc_only"));
+        return Err(tr_args!(
+            "err_flash_prc_only",
+            model = device_model.as_str()
+        ));
     }
 
     // EDL-start no longer forces rollback-bypass (or region) off. The device
@@ -361,7 +409,7 @@ pub(crate) fn flash_worker(
     // TB323FU keeps explicit Manual targets; only blind On is demoted to Auto.
     // TB376FC/TB390FU never modify rollback indices, regardless of UI input.
     let effective_mode =
-        effective_flash_rollback_mode(rb_mode, target_is_tb323fu, xiaoxin_pro13_flash);
+        effective_flash_rollback_mode(rb_mode, target_is_canoe, xiaoxin_pro13_flash);
     if effective_mode != rb_mode {
         rb_mode = effective_mode;
         ltbox_core::live!(
@@ -370,15 +418,15 @@ pub(crate) fn flash_worker(
             ltbox_core::i18n::tr(if xiaoxin_pro13_flash {
                 "live_flash_xiaoxin_force_auto"
             } else {
-                "live_flash_tb323fu_force_auto"
+                "live_flash_efisp_force_auto"
             })
         );
     }
-    if tb323fu_skip_region {
+    if canoe_skip_region && !no_efisp_load {
         ltbox_core::live!(
             log,
             "[Flash] {}",
-            ltbox_core::i18n::tr("live_flash_tb323fu_region_efisp")
+            ltbox_core::i18n::tr("live_flash_region_efisp")
         );
     }
     if xiaoxin_skip_region {
@@ -433,7 +481,7 @@ pub(crate) fn flash_worker(
     // ARB dump decides `_arb` (testkey-root) vs stock — see
     // the post-rawprogram-staging block below.
     let mut efisp_efi: Option<std::path::PathBuf> = None;
-    let mut tb323fu_arb_need = false;
+    let mut canoe_arb_need = false;
 
     // Count .x and .xml files
     // Count flashable `.x` (rawprogram) files. The
@@ -757,7 +805,10 @@ pub(crate) fn flash_worker(
                         if rb_mode != ltbox_patch::rollback::RollbackMode::Manual {
                             if cfg.modify_region || non_cn_country {
                                 let _ = session.reset_to_edl(&mut log);
-                                return Err(ltbox_core::i18n::tr("err_flash_tb322fc_prc_only"));
+                                return Err(tr_args!(
+                                    "err_flash_prc_only",
+                                    model = device_model.as_str()
+                                ));
                             }
                             rb_mode = ltbox_patch::rollback::RollbackMode::Off;
                             ltbox_core::live!(
@@ -767,7 +818,10 @@ pub(crate) fn flash_worker(
                             );
                         } else if cfg.modify_region || non_cn_country {
                             let _ = session.reset_to_edl(&mut log);
-                            return Err(ltbox_core::i18n::tr("err_flash_tb322fc_prc_only"));
+                            return Err(tr_args!(
+                                "err_flash_prc_only",
+                                model = device_model.as_str()
+                            ));
                         }
                     }
                     Some(floors) => {
@@ -912,6 +966,11 @@ pub(crate) fn flash_worker(
     // Bootloader to overlay onto abl_a after the flash: either the device backup
     // or the user-supplied testkey ABL selected by the wizard.
     let mut abl_restore: Option<(u8, std::path::PathBuf)> = None;
+    if let Some((_, path)) = &canoe_abl_stage {
+        let lun = ltbox_core::partition_lun::lun_for_partition("abl_a")
+            .ok_or_else(|| tr_args!("err_no_hardcoded_lun", partition = "abl_a"))?;
+        abl_restore = Some((lun, path.clone()));
+    }
 
     // AVB root-of-trust gate (device side). The firmware vbmeta was already
     // classified (`fw_key_class`): `Unknown` aborted before region conversion;
@@ -921,7 +980,7 @@ pub(crate) fn flash_worker(
     // region, no downgrade), re-signs to the testkey + preserves the device
     // bootloader (testkey device — including a cross-region convert-then-resign),
     // or aborts (Lenovo-key device cross-region/downgrade, or unknown device key).
-    if fw_key_class == ltbox_patch::key_map::KeyClass::Lenovo && !target_is_tb323fu {
+    if fw_key_class == ltbox_patch::key_map::KeyClass::Lenovo && !target_is_canoe {
         let kc_dir = ltbox_core::app_paths::work_dir_for("flash_keyclass");
         let _ = std::fs::remove_dir_all(&kc_dir);
         std::fs::create_dir_all(&kc_dir)
@@ -1114,12 +1173,47 @@ pub(crate) fn flash_worker(
             }
         }
     }
-    if rb_mode == ltbox_patch::rollback::RollbackMode::Manual {
+    if no_efisp_load {
+        // ABL without efisp cannot run the testkey/_arb GBL chain. Read-only
+        // device probes are necessary to discover a downgrade, but no program
+        // or erase command may precede this check, including with mode Off.
+        let checked = (|| {
+            let firmware = firmware_rollback_indices(fw_dir)?;
+            let floors = if let Some((boot, vbmeta_system)) = edl_floors {
+                RollbackIndices {
+                    boot,
+                    vbmeta_system,
+                }
+            } else {
+                let stage = tempfile::tempdir()
+                    .map_err(|e| tr_args!("err_arb_work_dir_failed", error = e))?;
+                let device = read_device_vbmeta(
+                    &mut session,
+                    active_slot.as_deref(),
+                    stage.path(),
+                    &mut log,
+                )?;
+                RollbackIndices {
+                    boot: device.boot_floor,
+                    vbmeta_system: device.vbs_floor,
+                }
+            };
+            validate_no_efisp_rollback(firmware, floors, manual_plan.map(|p| p.targets))
+        })();
+        if let Err(error) = checked {
+            if edl_start {
+                let _ = session.reset_to_edl(&mut log);
+            } else {
+                session.reset_tolerant(&mut log);
+            }
+            return Err(error);
+        }
+    } else if rb_mode == ltbox_patch::rollback::RollbackMode::Manual {
         let staged = (|| {
             let plan =
                 manual_plan.ok_or_else(|| ltbox_core::i18n::tr("rollback_manual_error_missing"))?;
             let arb_work_dir = ltbox_core::app_paths::work_dir_for("flash_arb");
-            if target_is_tb323fu {
+            if target_is_canoe {
                 if !plan.changes_indices() {
                     return Ok((Vec::new(), false));
                 }
@@ -1148,7 +1242,7 @@ pub(crate) fn flash_worker(
         match staged {
             Ok((overlays, needs_arb_gbl)) => {
                 arb_patched = overlays;
-                tb323fu_arb_need = needs_arb_gbl;
+                canoe_arb_need = needs_arb_gbl;
             }
             Err(error) => {
                 if edl_start {
@@ -1159,7 +1253,7 @@ pub(crate) fn flash_worker(
                 return Err(error);
             }
         }
-    } else if rb_mode != ltbox_patch::rollback::RollbackMode::Off && target_is_tb323fu {
+    } else if rb_mode != ltbox_patch::rollback::RollbackMode::Off && target_is_canoe {
         // TB323FU stages the testkey chain whenever the
         // install is a downgrade, independent of region /
         // wipe: the matching `_arb` GBL is flashed to efisp
@@ -1183,7 +1277,7 @@ pub(crate) fn flash_worker(
             None,
             &mut log,
         )?;
-        tb323fu_arb_need = need;
+        canoe_arb_need = need;
         arb_patched = overlays;
     } else if rb_mode != ltbox_patch::rollback::RollbackMode::Off {
         let arb_work_dir = ltbox_core::app_paths::work_dir_for("flash_arb");
@@ -1399,19 +1493,21 @@ pub(crate) fn flash_worker(
         }
     }
 
-    // Download the efisp GBL now that the ARB dump has
-    // decided stock vs `_arb` (testkey-root). The `_arb`
-    // GBL is fetched whenever Auto or Manual re-signed the
-    // chain; the normal GBL is fetched for a cross-region
-    // ("Other region") provisioning install. Neither is
-    // gated on data wipe — flashing efisp no longer forces
-    // a data reset, so it provisions in data-keep mode too.
-    // Both flash below.
-    if target_is_tb323fu && (tb323fu_arb_need || cfg.modify_region) {
+    // A testkey firmware needs the `_arb` root of trust even when its
+    // rollback indices remain unchanged. ABL loading was verified above,
+    // including a user-supplied replacement. Combine both reasons into one
+    // download/write without changing the rollback plan or requiring a wipe.
+    let efisp_arb_need = requires_arb_efisp(
+        firmware_fingerprint.as_deref(),
+        fw_key_class,
+        no_efisp_load,
+        canoe_arb_need,
+    );
+    if target_is_canoe && !no_efisp_load && (efisp_arb_need || cfg.modify_region) {
         // TB323FU's AVB fingerprint carries no region token; read the region
         // from the firmware vendor_boot's `product_region` DTB marker instead.
         let staged =
-            efisp_suffix_for_vendor_boot(&vendor_boot, tb323fu_arb_need).and_then(|suffix| {
+            efisp_suffix_for_vendor_boot(&vendor_boot, efisp_arb_need).and_then(|suffix| {
                 fetch_efisp_asset(
                     suffix,
                     &ltbox_core::app_paths::work_dir_for("flash_efisp"),
@@ -1452,6 +1548,16 @@ pub(crate) fn flash_worker(
     // Lenovo-key bootloader on a testkey-resigned chain. Restore best-effort on
     // those error paths (device stays in EDL for retry); the success-path
     // restore below stays fatal.
+    // The firmware ABL may have changed since folder inspection/preflight.
+    // Never flash a different load policy under a previously accepted choice.
+    if let Some(expected) = &canoe_abl_snapshot
+        && std::fs::read(fw_dir.join("abl.elf")).ok().as_ref() != Some(expected)
+    {
+        return Err(ltbox_core::i18n::tr("err_abl_efisp_undetermined"));
+    }
+    if target_is_canoe {
+        validate_canoe_rawprogram(&raw_xmls, canoe_abl_snapshot.as_deref(), no_efisp_load)?;
+    }
     phases.mark_writes_started();
     if let Err(e) = session.flash_rawprogram_with_wipe(&raw_xmls, &patch_xmls, cfg.wipe, &mut log) {
         let err = tr_args!("err_flash_firmware_failed", error = e.to_string());
@@ -1518,13 +1624,13 @@ pub(crate) fn flash_worker(
     // so the testkey chain and its `_arb` root of trust are
     // provisioned together, before the best-effort region /
     // country work that can abort in between. A fetched EFI
-    // (Some) is flashed: the `_arb` variant whenever a
-    // index change re-signed the chain — fatal on failure since
+    // (Some) is flashed: the `_arb` variant for an existing testkey
+    // firmware or an index change that re-signed the chain — fatal on failure since
     // that chain can't boot without it — or the normal
     // variant on a region-provisioning wipe (best-effort).
     // With no EFI fetched, a same-region wipe strips efisp;
     // every other mode leaves it untouched.
-    if target_is_tb323fu {
+    if target_is_canoe && !no_efisp_load {
         let efisp_lun = ltbox_core::partition_lun::lun_for_partition("efisp").unwrap_or(4);
         match &efisp_efi {
             Some(efi) => {
@@ -1540,11 +1646,11 @@ pub(crate) fn flash_worker(
                         "[Flash] {}",
                         tr_args!("live_flash_efisp_flash_failed", error = e.to_string())
                     );
-                    // A staged testkey ARB chain only boots
+                    // A testkey firmware or staged ARB chain only boots
                     // with this `_arb` GBL. Abort loudly
                     // (device stays in EDL for retry) rather
                     // than resetting into a rollback brick.
-                    if tb323fu_arb_need {
+                    if efisp_arb_need {
                         return Err(tr_args!(
                             "err_flash_efisp_arb_failed",
                             error = e.to_string()
@@ -1559,10 +1665,10 @@ pub(crate) fn flash_worker(
                 }
             }
             None => {
-                // A re-signed chain always fetches the `_arb` GBL,
+                // A testkey or re-signed chain always fetches the `_arb` GBL,
                 // so reaching here with `need` set is an
                 // internal inconsistency — fail safe.
-                if tb323fu_arb_need {
+                if efisp_arb_need {
                     return Err(ltbox_core::i18n::tr("err_flash_efisp_arb_missing"));
                 }
                 // Same-region wipe with no re-signing strips
@@ -1755,6 +1861,137 @@ fn xiaoxin_rollback_decision(
     }
 }
 
+/// Select the GBL trust root independently of rollback-index modification.
+/// `no_efisp_load` is accepted only after validating the installed ABL bytes.
+fn requires_arb_efisp(
+    firmware_fingerprint: Option<&str>,
+    key_class: ltbox_patch::key_map::KeyClass,
+    no_efisp_load: bool,
+    rollback_requires_arb: bool,
+) -> bool {
+    let testkey_firmware = key_class == ltbox_patch::key_map::KeyClass::Testkey
+        && firmware_fingerprint.is_some_and(|fp| {
+            ["TB323FU", "TB324ZC"]
+                .iter()
+                .any(|model| fingerprint_token_match(fp, model))
+        });
+    !no_efisp_load && (rollback_requires_arb || testkey_firmware)
+}
+
+fn validate_canoe_efisp_choice(
+    firmware: ltbox_patch::efisp_load::EfispLoad,
+    replacement: Option<ltbox_patch::efisp_load::EfispLoad>,
+    accepted_no_load: bool,
+) -> Result<(), String> {
+    use ltbox_patch::efisp_load::EfispLoad;
+    let effective = replacement.unwrap_or(firmware);
+    if effective == EfispLoad::Yes && !accepted_no_load {
+        return Ok(());
+    }
+    if replacement.is_none() && effective == EfispLoad::No && accepted_no_load {
+        return Ok(());
+    }
+    Err(ltbox_core::i18n::tr(if effective == EfispLoad::No {
+        "err_abl_efisp_not_loaded"
+    } else {
+        "err_abl_efisp_undetermined"
+    }))
+}
+
+/// Bind the accepted policy to the ABL bytes rawprogram will install. A
+/// replacement is independently staged and restored after rawprogram; without
+/// one, require a complete ABL input. A no-load run must never program efisp,
+/// including through an image entry supplied by the firmware package itself.
+fn validate_canoe_rawprogram(
+    xmls: &[std::path::PathBuf],
+    expected_abl: Option<&[u8]>,
+    no_efisp_load: bool,
+) -> Result<(), String> {
+    let invalid = || ltbox_core::i18n::tr("err_abl_efisp_undetermined");
+    let mut found_abl = false;
+    for xml in xmls {
+        let content = std::fs::read_to_string(xml).map_err(|_| invalid())?;
+        let doc = roxmltree::Document::parse(&content).map_err(|_| invalid())?;
+        for node in doc.descendants() {
+            let label = node.attribute("label").unwrap_or("").trim();
+            if !matches!(label, "abl_a" | "efisp") {
+                continue;
+            }
+            let kind = node.tag_name().name();
+            if label == "abl_a" && kind.eq_ignore_ascii_case("erase") && expected_abl.is_some() {
+                return Err(invalid());
+            }
+            if !kind.eq_ignore_ascii_case("program") {
+                continue;
+            }
+            let file = node.attribute("filename").unwrap_or("").trim();
+            let sectors = node
+                .attribute("num_partition_sectors")
+                .unwrap_or("0")
+                .parse::<u64>()
+                .map_err(|_| invalid())?;
+            if file.is_empty() || sectors == 0 {
+                continue;
+            }
+            if label == "efisp" && no_efisp_load {
+                return Err(ltbox_core::i18n::tr("err_abl_efisp_not_loaded"));
+            }
+            if label == "abl_a"
+                && let Some(expected) = expected_abl
+            {
+                let offset = node
+                    .attribute("file_sector_offset")
+                    .unwrap_or("0")
+                    .parse::<u64>()
+                    .map_err(|_| invalid())?;
+                // Canoe stock images use 4096-byte UFS sectors. Reject an
+                // offset or a truncated program that would change the ABL.
+                if offset != 0 || sectors.saturating_mul(4096) < expected.len() as u64 {
+                    return Err(invalid());
+                }
+                let path =
+                    ltbox_core::safe_path::safe_join(xml.parent().ok_or_else(invalid)?, file)
+                        .map_err(|_| invalid())?;
+                if std::fs::read(path).map_err(|_| invalid())? != expected {
+                    return Err(invalid());
+                }
+                found_abl = true;
+            }
+        }
+    }
+    if expected_abl.is_some() && !found_abl {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn firmware_rollback_indices(fw_dir: &std::path::Path) -> Result<RollbackIndices, String> {
+    let index = |name: &str| {
+        ltbox_patch::avb::extract_image_avb_info(&fw_dir.join(format!("{name}.img")))
+            .map(|info| info.rollback_index)
+            .map_err(|e| tr_args!("err_patch_arb_inspect_failed", image = name, error = e))
+    };
+    Ok(RollbackIndices {
+        boot: index("boot")?,
+        vbmeta_system: index("vbmeta_system")?,
+    })
+}
+
+fn validate_no_efisp_rollback(
+    firmware: RollbackIndices,
+    floors: RollbackIndices,
+    manual: Option<RollbackIndices>,
+) -> Result<(), String> {
+    if firmware.boot < floors.boot
+        || firmware.vbmeta_system < floors.vbmeta_system
+        || manual.is_some_and(|targets| targets != firmware)
+    {
+        Err(ltbox_core::i18n::tr("err_flash_no_efisp_rollback"))
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{XiaoxinRollbackDecision, xiaoxin_rollback_decision};
@@ -1762,6 +1999,129 @@ mod tests {
         EFISP_EXPECTED_ASSETS, EFISP_GBL_RELEASE_TAG, efisp_expected_asset, efisp_expected_sha256,
         verify_efisp_asset,
     };
+
+    #[test]
+    fn testkey_gbl_firmware_requires_arb_efisp_without_index_changes() {
+        use ltbox_patch::efisp_load::EfispLoad::{No, Yes};
+        use ltbox_patch::key_map::KeyClass::{Lenovo, Testkey, Unknown};
+
+        for model in ["TB323FU", "TB324ZC"] {
+            let fp = format!("Lenovo/{model}/{model}:15/build:user/release-keys");
+            for (firmware, replacement, no_load) in
+                [(Yes, None, false), (No, Some(Yes), false), (No, None, true)]
+            {
+                super::validate_canoe_efisp_choice(firmware, replacement, no_load).unwrap();
+                for rollback_need in [false, true] {
+                    assert_eq!(
+                        super::requires_arb_efisp(Some(&fp), Testkey, no_load, rollback_need),
+                        !no_load,
+                        "{model}, {firmware:?}, {replacement:?}, rollback={rollback_need}"
+                    );
+                }
+            }
+            for key in [Lenovo, Unknown] {
+                assert!(!super::requires_arb_efisp(Some(&fp), key, false, false));
+                assert!(super::requires_arb_efisp(Some(&fp), key, false, true));
+            }
+        }
+        for fp in [
+            None,
+            Some("Lenovo/TB320FC/TB320FC:15/build:user/test-keys"),
+            Some("Lenovo/TB324ZCextra/device:15/build:user/test-keys"),
+        ] {
+            assert!(!super::requires_arb_efisp(fp, Testkey, false, false));
+        }
+    }
+
+    #[test]
+    fn rawprogram_must_install_the_verified_abl_and_not_program_no_load_efisp() {
+        let dir = tempfile::tempdir().unwrap();
+        let xml = dir.path().join("rawprogram4.xml");
+        let expected = b"verified ABL";
+        std::fs::write(dir.path().join("abl.elf"), expected).unwrap();
+        std::fs::write(dir.path().join("other.elf"), b"different ABL").unwrap();
+        let check = |file: &str, offset: u64, extra: &str| {
+            std::fs::write(&xml, format!(
+                r#"<data><program label="abl_a" filename="{file}" num_partition_sectors="256" file_sector_offset="{offset}"/>{extra}</data>"#
+            )).unwrap();
+            super::validate_canoe_rawprogram(std::slice::from_ref(&xml), Some(expected), true)
+        };
+        assert!(check("abl.elf", 0, "").is_ok());
+        assert!(check("other.elf", 0, "").is_err());
+        assert!(check("abl.elf", 1, "").is_err());
+        assert!(check("", 0, "").is_err());
+        assert!(
+            check(
+                "abl.elf",
+                0,
+                r#"<program label="efisp" filename="gbl.efi" num_partition_sectors="1"/>"#
+            )
+            .is_err()
+        );
+        assert!(
+            check(
+                "abl.elf",
+                0,
+                r#"<program label="efisp" filename="" num_partition_sectors="768"/>"#
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn canoe_requires_verified_override_or_explicit_no_load_decision() {
+        use ltbox_patch::efisp_load::EfispLoad::{No, Undetermined, Yes};
+        for firmware in [Yes, No, Undetermined] {
+            assert!(super::validate_canoe_efisp_choice(firmware, Some(Yes), false).is_ok());
+            for replacement in [No, Undetermined] {
+                assert!(
+                    super::validate_canoe_efisp_choice(firmware, Some(replacement), false).is_err()
+                );
+                assert!(
+                    super::validate_canoe_efisp_choice(firmware, Some(replacement), true).is_err()
+                );
+            }
+        }
+        assert!(super::validate_canoe_efisp_choice(Yes, None, false).is_ok());
+        assert!(super::validate_canoe_efisp_choice(No, None, true).is_ok());
+        assert!(super::validate_canoe_efisp_choice(No, None, false).is_err());
+        assert!(super::validate_canoe_efisp_choice(Undetermined, None, true).is_err());
+        assert!(super::validate_canoe_efisp_choice(Yes, None, true).is_err());
+    }
+
+    #[test]
+    fn no_load_route_rejects_either_downgrade_and_any_manual_change() {
+        use ltbox_patch::rollback::RollbackIndices;
+        let firmware = RollbackIndices {
+            boot: 10,
+            vbmeta_system: 7,
+        };
+        for floors in [
+            RollbackIndices {
+                boot: 11,
+                vbmeta_system: 7,
+            },
+            RollbackIndices {
+                boot: 10,
+                vbmeta_system: 8,
+            },
+        ] {
+            assert!(super::validate_no_efisp_rollback(firmware, floors, None).is_err());
+        }
+        assert!(super::validate_no_efisp_rollback(firmware, firmware, None).is_ok());
+        assert!(super::validate_no_efisp_rollback(firmware, firmware, Some(firmware)).is_ok());
+        assert!(
+            super::validate_no_efisp_rollback(
+                firmware,
+                firmware,
+                Some(RollbackIndices {
+                    boot: 12,
+                    vbmeta_system: 7
+                })
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn xiaoxin_rollback_decision_fails_closed_and_rejects_either_downgrade() {

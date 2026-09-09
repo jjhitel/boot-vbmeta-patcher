@@ -67,7 +67,14 @@ impl App {
             FlashStep::Target => ("flash_target_title", Some("flash_target_subtitle")),
             FlashStep::Data => ("flash_data_title", Some("flash_data_subtitle")),
             FlashStep::Folder => ("flash_folder_title", Some("flash_folder_subtitle")),
-            FlashStep::Bootloader => ("flash_bootloader_title", Some("flash_bootloader_subtitle")),
+            FlashStep::Bootloader => (
+                "flash_bootloader_title",
+                Some(if self.flash.uses_gbl() {
+                    "flash_bootloader_efisp_desc"
+                } else {
+                    "flash_bootloader_subtitle"
+                }),
+            ),
             FlashStep::Confirm => ("flash_confirm_title", Some("flash_confirm_subtitle")),
             FlashStep::Flash => return Some(self.exec_action_bar()),
         };
@@ -86,7 +93,7 @@ impl App {
         // a grayed icon so the constraint is visible — silent skip
         // would confuse users who expect both options.
         let tb322fc = self.model_capabilities().prc_only;
-        let unsupported_tb322fc = tr_args!("model_unsupported", model = "TB322FC");
+        let unsupported_tb322fc = tr_args!("model_unsupported", model = self.device.model.as_str());
         let row_card: Element<'_, Message> = if tb322fc {
             icon_option_card_sub_square_disabled_sized(
                 lucide_disabled(icon::region_row(), self.wizard_square_icon()),
@@ -157,7 +164,7 @@ impl App {
         // never a valid target. Disable the card with a grayed icon to
         // keep the constraint visible on the picker.
         let tb322fc = self.model_capabilities().prc_only;
-        let unsupported_tb322fc = tr_args!("model_unsupported", model = "TB322FC");
+        let unsupported_tb322fc = tr_args!("model_unsupported", model = self.device.model.as_str());
         // Region-aware target descriptions spell out the hardware market and
         // the ROM being installed so users don't conflate the two (the most
         // common point of confusion in this wizard). device_region is chosen
@@ -447,6 +454,12 @@ impl App {
             "flash_bootloader_empty"
         } else if analyzing {
             "flash_bootloader_analyzing"
+        } else if self.flash.uses_gbl() {
+            match self.flash.user_abl_efisp_load {
+                ltbox_patch::efisp_load::EfispLoad::Yes => "common_yes",
+                ltbox_patch::efisp_load::EfispLoad::No => "err_abl_efisp_not_loaded",
+                ltbox_patch::efisp_load::EfispLoad::Undetermined => "err_abl_efisp_undetermined",
+            }
         } else {
             match self.flash.user_abl_key_class {
                 Some(ltbox_patch::key_map::KeyClass::Testkey) => "flash_key_testkey",
@@ -454,9 +467,13 @@ impl App {
                 Some(ltbox_patch::key_map::KeyClass::Unknown) | None => "flash_key_unknown",
             }
         };
-        let valid = self.flash.user_abl_key_class == Some(ltbox_patch::key_map::KeyClass::Testkey)
-            && !analyzing;
-        let verdict = text(self.t(verdict_key).to_string())
+        let valid = selected && self.flash.bootloader_can_next();
+        let verdict_text = if self.flash.uses_gbl() && selected && !analyzing && valid {
+            format!("{}: {}", self.t("efisp_load_label"), self.t(verdict_key))
+        } else {
+            self.t(verdict_key).to_string()
+        };
+        let verdict = text(verdict_text)
             .size(d.text(13.0))
             .style(move |theme: &Theme| iced::widget::text::Style {
                 color: Some(if valid {
@@ -471,6 +488,13 @@ impl App {
         let mut content = column![picker_row, verdict]
             .spacing(d.space(10.0))
             .align_x(iced::Alignment::Center);
+        if self.flash.uses_gbl() && !selected && !self.flash.bootloader_can_next() {
+            content = content.push(
+                text(self.t("err_abl_efisp_undetermined").to_string())
+                    .size(d.text(13.0))
+                    .center(),
+            );
+        }
         if let Some(path) = &self.flash.user_abl_path {
             content = content.push(
                 text(path.clone())

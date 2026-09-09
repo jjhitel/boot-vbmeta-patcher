@@ -3285,6 +3285,7 @@ dependencies = [
  "open",
  "os_pipe",
  "rfd",
+ "roxmltree 0.21.1",
  "semver",
  "serde",
  "serde_json",
@@ -3321,6 +3322,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tracing",
+ "xz2",
  "zip",
 ]
 
@@ -3417,6 +3419,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e2a88783b84d2d67ef2791778a9e76bfb68b8017aaf6c9d7d5f2626a478b16c"
 dependencies = [
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "lzma-sys"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fda04ab3764e6cde78b9974eec4f779acaba7c4e84b36eca3cf77c581b85d27"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
 ]
 
 [[package]]
@@ -7522,6 +7535,15 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "xz2"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "388c44dc09d76f1536602ead6d325eb532f5c122f17782bd57fb47baeeb767e2"
+dependencies = [
+ "lzma-sys",
+]
 
 [[package]]
 name = "y4m"

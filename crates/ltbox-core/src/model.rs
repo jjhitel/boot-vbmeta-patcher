@@ -12,6 +12,9 @@ pub const TB320FC_MODEL: &str = "TB320FC";
 /// Model token reported by LAVIE Tab 9QHD1 firmware.
 pub const LAVIE_TAB_9QHD1_MODEL: &str = "LAVIETab9QHD1";
 
+/// Model token reported by Lenovo Y700 5G firmware.
+pub const TB324ZC_MODEL: &str = "TB324ZC";
+
 /// Model token reported by Xiaoxin Pro 13 firmware.
 pub const TB376FC_MODEL: &str = "TB376FC";
 

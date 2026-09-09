@@ -2785,7 +2785,7 @@ impl App {
         if demo::prepare_flash_region_on_entry(self) {
             return Task::none();
         }
-        if self.is_tb322fc() {
+        if self.is_prc_only() {
             // PRC-only SKU: no lookup needed; skip straight to the target step.
             self.flash.device_region = Some(DeviceRegion::Prc);
             self.flash.step = 1;
@@ -3054,7 +3054,7 @@ impl App {
             // alone is wrong and would fail mid-Sahara — abort up
             // front. Performed during resolve so the wizard's Confirm
             // step shows the correct path.
-            if self.is_tb323fu()
+            if self.requires_sahara_manifest()
                 && is_melf_loader(path)
                 && let Some(parent) = path.parent()
             {
@@ -3062,7 +3062,8 @@ impl App {
                     return Ok(manifest.to_string_lossy().to_string());
                 }
                 return Err(tr_args!(
-                    "err_tb323fu_loader_manifest_required",
+                    "err_efisp_loader_manifest_required",
+                    model = self.device.model.as_str(),
                     path = path.display()
                 ));
             }
@@ -3257,7 +3258,7 @@ impl App {
     /// stray `.melf` selection to the manifest when one exists in
     /// the same folder; if not, it aborts up front rather than
     /// failing mid-Sahara.
-    fn is_tb323fu(&self) -> bool {
+    fn requires_sahara_manifest(&self) -> bool {
         self.model_capabilities().requires_sahara_manifest
     }
 
@@ -3324,8 +3325,8 @@ impl App {
     }
 
     fn loader_picker_desc(&self) -> String {
-        if self.is_tb323fu() {
-            self.t("loader_desc_tb323fu").to_string()
+        if self.requires_sahara_manifest() {
+            self.t("loader_desc_efisp_gbl").to_string()
         } else if self.device.model.is_empty() {
             self.t("loader_desc_unknown").to_string()
         } else {
@@ -3337,7 +3338,7 @@ impl App {
     /// wizard hides ROW + OtherRegion as disabled cards so the user
     /// cannot pick a region or cross-region flash target that the
     /// hardware doesn't ship with.
-    fn is_tb322fc(&self) -> bool {
+    fn is_prc_only(&self) -> bool {
         self.model_capabilities().prc_only
     }
 
@@ -4459,6 +4460,7 @@ mod tests {
             step: 4,
             firmware_folder: Some("firmware".to_string()),
             firmware_identity: Some(FirmwareIdentity {
+                efisp_load: ltbox_patch::efisp_load::EfispLoad::Undetermined,
                 key_class: ltbox_patch::key_map::KeyClass::Testkey,
                 fingerprint: None,
                 model_token: None,

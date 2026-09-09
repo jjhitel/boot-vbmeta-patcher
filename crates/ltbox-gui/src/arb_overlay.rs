@@ -1,4 +1,4 @@
-//! TB323FU efisp ARB-overlay provisioning: pick the efisp asset variant
+//! Canoe efisp ARB-overlay provisioning: pick the efisp asset variant
 //! and build the per-LUN overlay set. Extracted from main.rs.
 
 use crate::*;
@@ -43,7 +43,8 @@ fn read_efisp_is_empty(path: &std::path::Path) -> Result<bool, String> {
     Ok(efisp_is_empty(&data))
 }
 
-/// Select a GBL only after positively identifying the vendor_boot region.
+/// Select the vendor_boot region's GBL, defaulting to PRC when no marker exists
+/// (as on TB324ZC). Missing, unreadable and empty images still fail.
 pub(crate) fn efisp_suffix_for_vendor_boot(
     path: &std::path::Path,
     arb: bool,
@@ -52,15 +53,55 @@ pub(crate) fn efisp_suffix_for_vendor_boot(
     match ltbox_patch::region::detect_product_region(path) {
         Some(RegionTarget::Prc) => Ok(efisp_asset_suffix(true, arb)),
         Some(RegionTarget::Row) => Ok(efisp_asset_suffix(false, arb)),
-        None => Err(tr_args!("err_efisp_region_unknown", path = path.display())),
+        None => {
+            if std::fs::read(path).is_ok_and(|data| !data.is_empty()) {
+                Ok(efisp_asset_suffix(true, arb))
+            } else {
+                Err(tr_args!("err_efisp_region_unknown", path = path.display()))
+            }
+        }
     }
 }
 
-/// Inspect TB323FU `efisp` and, when it is still all-zero, stage the matching
+/// Require positive evidence that this ABL loads efisp.
+pub(crate) fn verify_abl_efisp(path: &std::path::Path) -> Result<(), String> {
+    use ltbox_patch::efisp_load::{EfispLoad, detect};
+    let data =
+        std::fs::read(path).map_err(|_| ltbox_core::i18n::tr("err_abl_efisp_undetermined"))?;
+    match detect(&data) {
+        EfispLoad::Yes => Ok(()),
+        EfispLoad::No => Err(ltbox_core::i18n::tr("err_abl_efisp_not_loaded")),
+        EfispLoad::Undetermined => Err(ltbox_core::i18n::tr("err_abl_efisp_undetermined")),
+    }
+}
+
+pub(crate) fn dump_verified_active_abl(
+    session: &mut ltbox_device::edl::EdlSession,
+    slot_suffix: &str,
+    destination: &std::path::Path,
+    log: &mut Vec<String>,
+) -> Result<(), String> {
+    let partition = format!("abl{}", active_slot_suffix(Some(slot_suffix)));
+    let lun = ltbox_core::partition_lun::lun_for_partition(&partition)
+        .ok_or_else(|| tr_args!("err_no_hardcoded_lun", partition = partition))?;
+    session
+        .dump_partition(&partition, destination, 0, lun, log)
+        .map_err(|error| {
+            tr_args!(
+                "err_root_dump_partition_failed",
+                partition = partition,
+                error = error
+            )
+        })?;
+    verify_abl_efisp(destination)
+}
+
+/// Inspect a Canoe target's `efisp` and, when it is still all-zero, stage the
+/// matching
 /// region GBL used by the Root and KonaBess device workers. The caller performs
-/// the actual efisp write with [`provision_tb323fu_efisp`] at the safest point
+/// the actual efisp write with [`provision_canoe_efisp`] at the safest point
 /// in its own operation.
-pub(crate) fn prepare_tb323fu_efisp(
+pub(crate) fn prepare_canoe_efisp(
     session: &mut ltbox_device::edl::EdlSession,
     slot_suffix: &str,
     dumped_vendor_boot: Option<&std::path::Path>,
@@ -68,22 +109,54 @@ pub(crate) fn prepare_tb323fu_efisp(
     efi_dir: &std::path::Path,
     log: &mut Vec<String>,
 ) -> std::result::Result<Option<std::path::PathBuf>, String> {
+    prepare_canoe_efisp_with(
+        slot_suffix,
+        dumped_vendor_boot,
+        work_dir,
+        efi_dir,
+        log,
+        &mut |partition, path, lun, log| {
+            session
+                .dump_partition(partition, path, 0, lun, log)
+                .map_err(|error| {
+                    tr_args!(
+                        "err_root_dump_partition_failed",
+                        partition = partition,
+                        error = error
+                    )
+                })
+        },
+        &mut |suffix, dir, log| fetch_efisp_asset(suffix, dir, "[Root]", log),
+    )
+}
+
+fn prepare_canoe_efisp_with(
+    slot_suffix: &str,
+    dumped_vendor_boot: Option<&std::path::Path>,
+    work_dir: &std::path::Path,
+    efi_dir: &std::path::Path,
+    log: &mut Vec<String>,
+    dump: &mut impl FnMut(&str, &std::path::Path, u8, &mut Vec<String>) -> Result<(), String>,
+    fetch: &mut impl FnMut(
+        &str,
+        &std::path::Path,
+        &mut Vec<String>,
+    ) -> Result<std::path::PathBuf, String>,
+) -> Result<Option<std::path::PathBuf>, String> {
     live!(
         log,
         "[Root] {}",
         ltbox_core::i18n::tr("log_root_efisp_check")
     );
+    let abl_partition = format!("abl{}", active_slot_suffix(Some(slot_suffix)));
+    let abl_lun = ltbox_core::partition_lun::lun_for_partition(&abl_partition)
+        .ok_or_else(|| tr_args!("err_no_hardcoded_lun", partition = abl_partition))?;
+    let abl_path = work_dir.join("abl.img");
+    dump(&abl_partition, &abl_path, abl_lun, log)?;
+    verify_abl_efisp(&abl_path)?;
     let dumped_efisp = work_dir.join("efisp.img");
     let efisp_lun = ltbox_core::partition_lun::lun_for_partition("efisp").unwrap_or(4);
-    session
-        .dump_partition("efisp", &dumped_efisp, 0, efisp_lun, log)
-        .map_err(|e| {
-            tr_args!(
-                "err_root_dump_partition_failed",
-                partition = "efisp",
-                error = e
-            )
-        })?;
+    dump("efisp", &dumped_efisp, efisp_lun, log)?;
     let efisp_empty = read_efisp_is_empty(&dumped_efisp)?;
     if !efisp_empty {
         live!(log, "[Root] {}", ltbox_core::i18n::tr("log_root_efisp_ok"));
@@ -100,18 +173,10 @@ pub(crate) fn prepare_tb323fu_efisp(
         let path = work_dir.join("vendor_boot.img");
         let lun = ltbox_core::partition_lun::lun_for_partition(&partition)
             .ok_or_else(|| tr_args!("err_no_hardcoded_lun", partition = partition))?;
-        session
-            .dump_partition(&partition, &path, 0, lun, log)
-            .map_err(|error| {
-                tr_args!(
-                    "err_root_dump_partition_failed",
-                    partition = partition,
-                    error = error
-                )
-            })?;
+        dump(&partition, &path, lun, log)?;
         efisp_suffix_for_vendor_boot(&path, false)?
     };
-    fetch_efisp_asset(suffix, efi_dir, "[Root]", log).map(Some)
+    fetch(suffix, efi_dir, log).map(Some)
 }
 
 /// Download the pinned efisp GBL for `suffix` into `efi_dir` and verify it.
@@ -236,9 +301,10 @@ pub(crate) fn verify_efisp_asset(path: &std::path::Path, asset_name: &str) -> Re
     Ok(())
 }
 
-/// Provision a staged TB323FU region GBL. `None` is the already-provisioned
+/// Provision a staged region GBL for a Canoe target. `None` is the
+/// already-provisioned
 /// path and deliberately performs no device write.
-pub(crate) fn provision_tb323fu_efisp(
+pub(crate) fn provision_canoe_efisp(
     session: &mut ltbox_device::edl::EdlSession,
     efi: Option<&std::path::Path>,
     log: &mut Vec<String>,
@@ -614,18 +680,27 @@ mod provisioning_tests {
     }
 
     #[test]
-    fn gbl_selection_requires_a_known_region_for_stock_and_arb() {
+    fn gbl_selection_defaults_to_prc_without_a_region_marker() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vendor_boot.img");
         for arb in [false, true] {
             assert!(efisp_suffix_for_vendor_boot(&path, arb).is_err());
             assert!(efisp_suffix_for_vendor_boot(dir.path(), arb).is_err());
         }
-        for data in [b"".as_slice(), b"invalid", b"product_region\0model\0"] {
+        std::fs::write(&path, b"").unwrap();
+        for arb in [false, true] {
+            assert!(efisp_suffix_for_vendor_boot(&path, arb).is_err());
+        }
+        for data in [b"no region marker".as_slice(), b"product_region\0model\0"] {
             std::fs::write(&path, data).unwrap();
-            for arb in [false, true] {
-                assert!(efisp_suffix_for_vendor_boot(&path, arb).is_err());
-            }
+            assert_eq!(
+                efisp_suffix_for_vendor_boot(&path, false).unwrap(),
+                "_prc.efi"
+            );
+            assert_eq!(
+                efisp_suffix_for_vendor_boot(&path, true).unwrap(),
+                "_prc_arb.efi"
+            );
         }
         // Minimal product_region FDT property layout accepted by the detector.
         for (region, stock, arb) in [
@@ -732,5 +807,41 @@ mod provisioning_tests {
         );
 
         assert!(result.is_err());
+    }
+}
+
+#[cfg(test)]
+mod abl_preparation_tests {
+    use super::*;
+
+    #[test]
+    fn rejected_abl_prevents_efisp_read_and_fetch() {
+        for slot in ["_a", "_b"] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut reads = Vec::new();
+            let result = prepare_canoe_efisp_with(
+                slot,
+                None,
+                dir.path(),
+                dir.path(),
+                &mut Vec::new(),
+                &mut |partition, path, lun, _| {
+                    reads.push((partition.to_owned(), lun));
+                    std::fs::write(path, b"unrecognized ABL").unwrap();
+                    Ok(())
+                },
+                &mut |_, _, _| panic!("unverified ABL must not fetch GBL"),
+            );
+            assert!(result.is_err());
+            let partition = format!("abl{slot}");
+            assert_eq!(
+                reads,
+                vec![(
+                    partition.clone(),
+                    ltbox_core::partition_lun::lun_for_partition(&partition).unwrap()
+                )]
+            );
+            assert!(!dir.path().join("efisp.img").exists());
+        }
     }
 }

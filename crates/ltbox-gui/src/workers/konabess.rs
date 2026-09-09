@@ -3,7 +3,7 @@
 
 use crate::{
     ConnectionStatus, KonaBessPrepared, LiveLabels, PhaseReporter, open_edl_session,
-    prepare_tb323fu_efisp, provision_tb323fu_efisp, transition_to_edl,
+    prepare_canoe_efisp, provision_canoe_efisp, transition_to_edl,
 };
 use ltbox_core::{live, tr_args};
 use ltbox_patch::konabess::{GpuTable, KonaBessAvbOutput, KonaBessBuildStage, VendorBootDtbInfo};
@@ -25,7 +25,7 @@ struct InspectionPaths {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExploitGateKind {
     SignedVbmeta,
-    Tb323fuEfisp,
+    EfispGbl,
 }
 
 fn exploit_gate_kind(
@@ -36,7 +36,7 @@ fn exploit_gate_kind(
         .map(|capabilities| capabilities.root_uses_gbl)
         .unwrap_or(fallback_uses_gbl);
     if uses_gbl {
-        ExploitGateKind::Tb323fuEfisp
+        ExploitGateKind::EfispGbl
     } else {
         ExploitGateKind::SignedVbmeta
     }
@@ -152,9 +152,9 @@ impl KonaBessInspectionBackend for DeviceBackend<'_> {
             return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
         }
         match exploit_gate_kind(image_capabilities, self.uses_gbl) {
-            ExploitGateKind::Tb323fuEfisp => {
+            ExploitGateKind::EfispGbl => {
                 let efi_dir = work_dir.join("efisp_gbl");
-                let staged = prepare_tb323fu_efisp(
+                let staged = prepare_canoe_efisp(
                     self.session()?,
                     slot_suffix,
                     Some(vendor_boot),
@@ -166,7 +166,7 @@ impl KonaBessInspectionBackend for DeviceBackend<'_> {
                 if self.writes_started {
                     self.phases.mark_writes_started();
                 }
-                provision_tb323fu_efisp(self.session()?, staged.as_deref(), log)?;
+                provision_canoe_efisp(self.session()?, staged.as_deref(), log)?;
                 Ok(())
             }
             ExploitGateKind::SignedVbmeta => {
@@ -355,6 +355,12 @@ trait KonaBessFlashBackend {
         on_stage: &mut dyn FnMut(KonaBessBuildStage),
     ) -> Result<KonaBessAvbOutput, String>;
     fn open_session(&mut self, log: &mut Vec<String>) -> Result<(), String>;
+    fn verify_abl(
+        &mut self,
+        prepared: &KonaBessPrepared,
+        fresh: bool,
+        log: &mut Vec<String>,
+    ) -> Result<(), String>;
     fn flash_partition(
         &mut self,
         partition: &str,
@@ -402,6 +408,24 @@ impl KonaBessFlashBackend for FlashDeviceBackend<'_> {
             on_stage,
         )
         .map_err(|error| error.to_string())
+    }
+
+    fn verify_abl(
+        &mut self,
+        prepared: &KonaBessPrepared,
+        fresh: bool,
+        log: &mut Vec<String>,
+    ) -> Result<(), String> {
+        if fresh {
+            crate::dump_verified_active_abl(
+                self.session()?,
+                &prepared.slot_suffix,
+                &prepared.work_dir.join("abl-current.img"),
+                log,
+            )
+        } else {
+            crate::verify_abl_efisp(&prepared.work_dir.join("abl.img"))
+        }
     }
 
     fn open_session(&mut self, log: &mut Vec<String>) -> Result<(), String> {
@@ -458,9 +482,8 @@ struct KonaBessTableEdit<'a> {
     target_index: usize,
     chip: &'a str,
     table: &'a GpuTable,
-    /// Boot chain verified by the GBL EFI on `efisp` rather than by AVB, read
-    /// from the dumped image the way the root pipeline reads it. The AVB
-    /// rebuild is skipped, so a Lenovo-key vbmeta no longer stops the run.
+    /// GBL route requested by the inspected firmware. Preserved and fresh
+    /// active-slot ABL evidence is required before skipping AVB and writing.
     gbl_verified: bool,
 }
 
@@ -471,6 +494,9 @@ fn execute_flash<B: KonaBessFlashBackend>(
     phases: &PhaseReporter,
     log: &mut Vec<String>,
 ) -> Result<(), String> {
+    if edit.gbl_verified {
+        backend.verify_abl(prepared, false, log)?;
+    }
     let output_dir = prepared.work_dir.join("rebuilt");
     let output = backend.build_pair(&prepared.work_dir, &output_dir, edit, &mut |stage| {
         live!(
@@ -499,6 +525,9 @@ fn execute_flash<B: KonaBessFlashBackend>(
 
     live!(log, "[KonaBess] {}", phases.marker(6));
     backend.open_session(log)?;
+    if edit.gbl_verified {
+        backend.verify_abl(prepared, true, log)?;
+    }
     phases.mark_writes_started();
     backend.flash_partition(
         &vendor_boot_partition,
@@ -568,8 +597,8 @@ pub(crate) fn konabess_flash_worker(
     {
         return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
     }
-    // Read from the dumped image, not the connection: EDL reports no model, and
-    // this decides whether the AVB chain is rebuilt at all.
+    // The fingerprint selects the route; execute_flash separately verifies
+    // the inspection ABL and the current session ABL before trusting it.
     let gbl_verified = prepared_fingerprint
         .as_deref()
         .is_some_and(|fp| ltbox_core::model::fingerprint_capabilities(fp).any(|p| p.root_uses_gbl));
@@ -699,6 +728,7 @@ mod tests {
     struct FakeFlashBackend {
         events: Vec<String>,
         build_error: Option<String>,
+        abl_error: Option<bool>,
         fail_second_write: bool,
         session_open: bool,
         writes_started: bool,
@@ -730,6 +760,21 @@ mod tests {
                 vbmeta: (!gbl_verified).then(|| output_dir.join("vbmeta.img")),
                 target_index,
             })
+        }
+
+        fn verify_abl(
+            &mut self,
+            _prepared: &KonaBessPrepared,
+            fresh: bool,
+            _log: &mut Vec<String>,
+        ) -> Result<(), String> {
+            assert_eq!(self.session_open, fresh);
+            self.events.push(format!("abl:{fresh}"));
+            if self.abl_error == Some(fresh) {
+                Err("ABL rejected".into())
+            } else {
+                Ok(())
+            }
         }
 
         fn open_session(&mut self, _log: &mut Vec<String>) -> Result<(), String> {
@@ -834,8 +879,8 @@ mod tests {
     }
 
     #[test]
-    fn tb323fu_empty_efisp_requires_provision_and_bypasses_avb_gate() {
-        assert_eq!(exploit_gate_kind(None, true), ExploitGateKind::Tb323fuEfisp);
+    fn canoe_empty_efisp_requires_provision_and_bypasses_avb_gate() {
+        assert_eq!(exploit_gate_kind(None, true), ExploitGateKind::EfispGbl);
         assert_eq!(
             exploit_gate_kind(None, false),
             ExploitGateKind::SignedVbmeta
@@ -850,10 +895,7 @@ mod tests {
         let tb323fu = ltbox_core::model::capabilities_from_fingerprint(
             "qti/TB323FU/TB323FU:15/build:user/release-keys",
         );
-        assert_eq!(
-            exploit_gate_kind(tb323fu, false),
-            ExploitGateKind::Tb323fuEfisp
-        );
+        assert_eq!(exploit_gate_kind(tb323fu, false), ExploitGateKind::EfispGbl);
         let tb320fc = ltbox_core::model::capabilities_from_fingerprint(
             "qti/LAVIETab9QHD1/LAVIETab9QHD1:15/build:user/release-keys",
         );
@@ -862,10 +904,7 @@ mod tests {
             ExploitGateKind::SignedVbmeta
         );
         let unknown = ltbox_core::model::capabilities_from_fingerprint("qti/unknown/build");
-        assert_eq!(
-            exploit_gate_kind(unknown, true),
-            ExploitGateKind::Tb323fuEfisp
-        );
+        assert_eq!(exploit_gate_kind(unknown, true), ExploitGateKind::EfispGbl);
     }
 
     #[test]
@@ -937,6 +976,38 @@ mod tests {
             "{:?}",
             backend.events
         );
+    }
+
+    #[test]
+    fn rejected_preserved_or_fresh_abl_prevents_gbl_writes() {
+        for fresh in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let mut backend = FakeFlashBackend {
+                abl_error: Some(fresh),
+                ..Default::default()
+            };
+            let error = run_flash(
+                &mut backend,
+                &prepared(root.path()),
+                KonaBessTableEdit {
+                    gbl_verified: true,
+                    target_index: 3,
+                    chip: "waipio",
+                    table: &table(),
+                },
+                &flash_phases(),
+                &mut Vec::new(),
+            )
+            .unwrap_err();
+            assert_eq!(error, "ABL rejected");
+            let expected = if fresh {
+                vec!["abl:false", "build:3", "open", "abl:true", "recover"]
+            } else {
+                vec!["abl:false", "recover"]
+            };
+            assert_eq!(backend.events, expected);
+            assert!(!backend.writes_started);
+        }
     }
 
     #[test]

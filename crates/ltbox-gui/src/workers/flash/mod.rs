@@ -81,11 +81,11 @@ fn lenovo_firmware_device_policy(
 
 fn effective_flash_rollback_mode(
     mode: ltbox_patch::rollback::RollbackMode,
-    target_is_tb323fu: bool,
+    target_is_canoe: bool,
     xiaoxin_pro13_flash: bool,
 ) -> ltbox_patch::rollback::RollbackMode {
     use ltbox_patch::rollback::RollbackMode;
-    if xiaoxin_pro13_flash || (target_is_tb323fu && mode == RollbackMode::On) {
+    if xiaoxin_pro13_flash || (target_is_canoe && mode == RollbackMode::On) {
         RollbackMode::Auto
     } else {
         mode

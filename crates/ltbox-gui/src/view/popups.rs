@@ -1531,12 +1531,28 @@ impl App {
                 let model = identity
                     .and_then(|value| value.model_token.as_deref())
                     .unwrap_or_else(|| self.t("flash_firmware_model_unknown"));
-                column![
-                    info_kv_center(self.t("flash_firmware_identity_key"), self.t(verdict_key),),
-                    info_kv_center(self.t("flash_firmware_identity_model"), model),
-                ]
-                .spacing(8)
-                .into()
+                let mut details = column![].spacing(8);
+                if identity.is_some_and(FirmwareIdentity::uses_gbl) {
+                    let efisp_key = match identity.map(|value| value.efisp_load) {
+                        Some(ltbox_patch::efisp_load::EfispLoad::Yes) => "common_yes",
+                        Some(ltbox_patch::efisp_load::EfispLoad::No) => "common_no",
+                        _ => "efisp_load_unknown",
+                    };
+                    details = details.push(info_kv_center(
+                        self.t("efisp_load_label"),
+                        self.t(efisp_key),
+                    ));
+                }
+                details
+                    .push(info_kv_center(
+                        self.t("flash_firmware_identity_key"),
+                        self.t(verdict_key),
+                    ))
+                    .push(info_kv_center(
+                        self.t("flash_firmware_identity_model"),
+                        model,
+                    ))
+                    .into()
             }
             FirmwareIdentityDialog::Failed(error) => text(error.clone())
                 .size(13)

@@ -391,7 +391,10 @@ impl App {
                 {
                     self.root.mode = None;
                     self.root.step = 1; // Mode step
-                    self.error_msg = Some(tr_args!("model_unsupported", model = "TB323FU"));
+                    self.error_msg = Some(tr_args!(
+                        "model_unsupported",
+                        model = self.device.model.as_str()
+                    ));
                     return Task::none();
                 }
                 if self

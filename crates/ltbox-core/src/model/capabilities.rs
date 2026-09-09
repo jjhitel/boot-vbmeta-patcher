@@ -6,8 +6,9 @@
 use super::{LAVIE_TAB_9QHD1_MODEL, token_match};
 
 /// Models in the existing GUI and firmware resolver order.
-pub const SUPPORTED_MODELS: [&str; 8] = [
-    "TB320FC", "TB321FU", "TB322FC", "TB323FU", "TB376FC", "TB390FU", "TB520FU", "TB710FU",
+pub const SUPPORTED_MODELS: [&str; 9] = [
+    "TB320FC", "TB321FU", "TB322FC", "TB323FU", "TB324ZC", "TB376FC", "TB390FU", "TB520FU",
+    "TB710FU",
 ];
 
 /// Rollback protection and supported rollback-index operations.
@@ -108,6 +109,18 @@ const TB323FU: ModelCapabilities = ModelCapabilities {
     rollback: RollbackPolicy::Gbl,
     ..GENERIC
 };
+/// TB324ZC — Y700 5G. Shares TB323FU's efisp/GBL route and multi-image Sahara
+/// manifest, but ships PRC-only firmware and exposes a single USB-C port.
+const TB324ZC: ModelCapabilities = ModelCapabilities {
+    gki_root: false,
+    rescue: false,
+    root_uses_gbl: true,
+    requires_sahara_manifest: true,
+    prc_only: true,
+    region_avb_conversion: false,
+    rollback: RollbackPolicy::Gbl,
+    ..GENERIC
+};
 const XIAOXIN_PRO13: ModelCapabilities = ModelCapabilities {
     root: false,
     gki_root: false,
@@ -119,15 +132,16 @@ const XIAOXIN_PRO13: ModelCapabilities = ModelCapabilities {
     ..GENERIC
 };
 
-const PROFILES: [(&str, &ModelCapabilities); 9] = [
+const PROFILES: [(&str, &ModelCapabilities); 10] = [
     (SUPPORTED_MODELS[0], &TB320FC),
     (SUPPORTED_MODELS[1], &TB321FU),
     (SUPPORTED_MODELS[2], &TB322FC),
     (SUPPORTED_MODELS[3], &TB323FU),
-    (SUPPORTED_MODELS[4], &XIAOXIN_PRO13),
+    (SUPPORTED_MODELS[4], &TB324ZC),
     (SUPPORTED_MODELS[5], &XIAOXIN_PRO13),
-    (SUPPORTED_MODELS[6], &GENERIC),
+    (SUPPORTED_MODELS[6], &XIAOXIN_PRO13),
     (SUPPORTED_MODELS[7], &GENERIC),
+    (SUPPORTED_MODELS[8], &GENERIC),
     (LAVIE_TAB_9QHD1_MODEL, &TB320FC),
 ];
 
@@ -162,6 +176,31 @@ pub fn fingerprint_capabilities(fp: &str) -> impl Iterator<Item = &'static Model
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TB324ZC shares TB323FU's exploit route but not its hardware or region,
+    /// so it is pinned against that profile rather than described twice.
+    #[test]
+    fn tb324zc_shares_the_gbl_route_but_is_prc_only_with_one_usb_port() {
+        let tb324zc = capabilities("TB324ZC");
+        let tb323fu = capabilities("TB323FU");
+
+        assert!(tb324zc.root_uses_gbl);
+        assert!(tb324zc.requires_sahara_manifest);
+        assert_eq!(tb324zc.rollback, RollbackPolicy::Gbl);
+        assert!(tb324zc.rollback.is_protected());
+        assert!(!tb324zc.gki_root);
+        assert!(!tb324zc.rescue);
+        assert!(!tb324zc.region_avb_conversion);
+
+        // The two axes that separate it from TB323FU.
+        assert!(tb324zc.prc_only && !tb323fu.prc_only);
+        assert!(!tb324zc.dual_usb && tb323fu.dual_usb);
+
+        assert_eq!(
+            capabilities_from_fingerprint("qti/TB324ZC/TB324ZC:16/build:user/release-keys"),
+            Some(tb324zc)
+        );
+    }
 
     #[test]
     fn exact_model_names_accept_case_and_lavie_but_reject_suffixes() {
