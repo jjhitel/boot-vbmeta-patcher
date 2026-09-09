@@ -4460,6 +4460,7 @@ mod tests {
             step: 4,
             firmware_folder: Some("firmware".to_string()),
             firmware_identity: Some(FirmwareIdentity {
+                efisp_load: ltbox_patch::efisp_load::EfispLoad::Undetermined,
                 key_class: ltbox_patch::key_map::KeyClass::Testkey,
                 fingerprint: None,
                 model_token: None,

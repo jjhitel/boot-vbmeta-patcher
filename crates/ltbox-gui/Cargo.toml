@@ -13,6 +13,7 @@ default = []
 demo = []
 
 [dependencies]
+roxmltree = { workspace = true }
 ltbox-core = { path = "../ltbox-core" }
 ltbox-device = { path = "../ltbox-device" }
 ltbox-patch = { path = "../ltbox-patch" }

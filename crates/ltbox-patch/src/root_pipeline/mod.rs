@@ -456,6 +456,19 @@ pub fn build_patched_artifacts(
     fs::create_dir_all(&cfg.work_dir)?;
     fs::create_dir_all(&cfg.output_dir)?;
 
+    if skip_avb {
+        use crate::efisp_load::{EfispLoad, detect};
+        let abl = fs::read(cfg.work_dir.join("abl.img"))
+            .map_err(|_| LtboxError::Patch(tr("err_abl_efisp_undetermined")))?;
+        match detect(&abl) {
+            EfispLoad::Yes => {}
+            EfispLoad::No => return Err(LtboxError::Patch(tr("err_abl_efisp_not_loaded"))),
+            EfispLoad::Undetermined => {
+                return Err(LtboxError::Patch(tr("err_abl_efisp_undetermined")));
+            }
+        }
+    }
+
     let stock_filename = cfg.root_image_target.filename();
     let stock_root_image_src = cfg.work_dir.join(stock_filename);
     let vbmeta_src = cfg.work_dir.join("vbmeta.img");
@@ -566,8 +579,8 @@ pub fn build_patched_artifacts(
     let suffix = cfg.slot_suffix.clone();
 
     let (patched_vbmeta, vbmeta_partition) = if skip_avb {
-        // GBL root: boot verification is handled by the GBL EFI on
-        // `efisp`, so the stock AVB verification path is bypassed. Flash the
+        // The preserved active-slot ABL positively loads efisp. The caller
+        // must also establish or provision the compatible GBL on efisp. Flash the
         // repacked image as-is — no hash footer re-signing, no vbmeta rebuild,
         // no vbmeta flash (the caller skips the vbmeta dump too). Magiskboot
         // may retain the original embedded VBMeta/footer; this branch does

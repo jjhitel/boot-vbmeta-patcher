@@ -347,7 +347,8 @@ pub(crate) fn root_worker(
             // before the first patch/write operation.
             let backup_dir: std::path::PathBuf;
             // Set inside the dump block from the dumped root image's
-            // fingerprint; carried to Phase 5 to skip AVB + vbmeta.
+            // fingerprint; the active ABL is verified below before Phase 5
+            // may skip AVB + vbmeta.
             let uses_gbl;
             // Whether the stock vbmeta ended up in the backup folder, so the
             // manifest can tell Unroot which partitions to restore.

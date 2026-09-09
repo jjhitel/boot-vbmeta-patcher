@@ -3285,6 +3285,7 @@ dependencies = [
  "open",
  "os_pipe",
  "rfd",
+ "roxmltree 0.21.1",
  "semver",
  "serde",
  "serde_json",

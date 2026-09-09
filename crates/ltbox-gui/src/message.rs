@@ -248,7 +248,11 @@ pub(crate) enum FlashMsg {
     FlashLoaderChosen(Option<String>),
     FlashSelectBootloader,
     FlashBootloaderChosen(Option<String>),
-    FlashBootloaderAnalysed(String, ltbox_patch::key_map::KeyClass),
+    FlashBootloaderAnalysed(
+        String,
+        ltbox_patch::key_map::KeyClass,
+        ltbox_patch::efisp_load::EfispLoad,
+    ),
     FlashClearBootloader,
     /// Confirm-step "hidden dropdown": open the option editor for a row.
     FlashConfirmOpen(ConfirmField),
