@@ -112,11 +112,7 @@ impl App {
                 if action == SysUpdateAction::Rescue && !self.model_capabilities().rescue {
                     self.error_msg = Some(tr_args!(
                         "model_unsupported",
-                        model = if self.is_tb323fu() {
-                            "TB323FU"
-                        } else {
-                            "TB376FC / TB390FU"
-                        }
+                        model = self.device.model.as_str()
                     ));
                     return Task::none();
                 }

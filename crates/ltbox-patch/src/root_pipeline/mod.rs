@@ -566,13 +566,13 @@ pub fn build_patched_artifacts(
     let suffix = cfg.slot_suffix.clone();
 
     let (patched_vbmeta, vbmeta_partition) = if skip_avb {
-        // TB323FU GBL root: boot verification is handled by the GBL EFI on
+        // GBL root: boot verification is handled by the GBL EFI on
         // `efisp`, so the stock AVB verification path is bypassed. Flash the
         // repacked image as-is — no hash footer re-signing, no vbmeta rebuild,
         // no vbmeta flash (the caller skips the vbmeta dump too). Magiskboot
         // may retain the original embedded VBMeta/footer; this branch does
         // not erase it or refresh its signature after replacing the kernel.
-        ltbox_core::live!(log, "[AVB] {}", tr("log_root_skip_avb_tb323fu"));
+        ltbox_core::live!(log, "[AVB] {}", tr("log_root_skip_avb_canoe"));
         (None, None)
     } else {
         // Re-add AVB hash footer. Algorithm + rollback index copied from stock

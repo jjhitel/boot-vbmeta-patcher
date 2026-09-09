@@ -325,11 +325,11 @@ pub(crate) fn flash_worker(
             .into_iter()
             .flat_map(fingerprint_capabilities)
     };
-    let tb323fu_skip_region = device_caps.rollback == RollbackPolicy::Gbl
+    let canoe_skip_region = device_caps.rollback == RollbackPolicy::Gbl
         || firmware_caps().any(|caps| caps.rollback == RollbackPolicy::Gbl);
 
     // GBL provisioning follows only the target firmware, never device identity.
-    let target_is_tb323fu = firmware_caps().any(|caps| caps.rollback == RollbackPolicy::Gbl);
+    let target_is_canoe = firmware_caps().any(|caps| caps.rollback == RollbackPolicy::Gbl);
     let xiaoxin_skip_region = xiaoxin_pro13_token(&device_model).is_some()
         || firmware_fingerprint
             .as_deref()
@@ -348,7 +348,10 @@ pub(crate) fn flash_worker(
                 .target()
                 .is_some_and(|country| !country.eq_ignore_ascii_case("CN")))
     {
-        return Err(ltbox_core::i18n::tr("err_flash_tb322fc_prc_only"));
+        return Err(tr_args!(
+            "err_flash_prc_only",
+            model = device_model.as_str()
+        ));
     }
 
     // EDL-start no longer forces rollback-bypass (or region) off. The device
@@ -361,7 +364,7 @@ pub(crate) fn flash_worker(
     // TB323FU keeps explicit Manual targets; only blind On is demoted to Auto.
     // TB376FC/TB390FU never modify rollback indices, regardless of UI input.
     let effective_mode =
-        effective_flash_rollback_mode(rb_mode, target_is_tb323fu, xiaoxin_pro13_flash);
+        effective_flash_rollback_mode(rb_mode, target_is_canoe, xiaoxin_pro13_flash);
     if effective_mode != rb_mode {
         rb_mode = effective_mode;
         ltbox_core::live!(
@@ -370,15 +373,15 @@ pub(crate) fn flash_worker(
             ltbox_core::i18n::tr(if xiaoxin_pro13_flash {
                 "live_flash_xiaoxin_force_auto"
             } else {
-                "live_flash_tb323fu_force_auto"
+                "live_flash_efisp_force_auto"
             })
         );
     }
-    if tb323fu_skip_region {
+    if canoe_skip_region {
         ltbox_core::live!(
             log,
             "[Flash] {}",
-            ltbox_core::i18n::tr("live_flash_tb323fu_region_efisp")
+            ltbox_core::i18n::tr("live_flash_region_efisp")
         );
     }
     if xiaoxin_skip_region {
@@ -433,7 +436,7 @@ pub(crate) fn flash_worker(
     // ARB dump decides `_arb` (testkey-root) vs stock — see
     // the post-rawprogram-staging block below.
     let mut efisp_efi: Option<std::path::PathBuf> = None;
-    let mut tb323fu_arb_need = false;
+    let mut canoe_arb_need = false;
 
     // Count .x and .xml files
     // Count flashable `.x` (rawprogram) files. The
@@ -757,7 +760,10 @@ pub(crate) fn flash_worker(
                         if rb_mode != ltbox_patch::rollback::RollbackMode::Manual {
                             if cfg.modify_region || non_cn_country {
                                 let _ = session.reset_to_edl(&mut log);
-                                return Err(ltbox_core::i18n::tr("err_flash_tb322fc_prc_only"));
+                                return Err(tr_args!(
+                                    "err_flash_prc_only",
+                                    model = device_model.as_str()
+                                ));
                             }
                             rb_mode = ltbox_patch::rollback::RollbackMode::Off;
                             ltbox_core::live!(
@@ -767,7 +773,10 @@ pub(crate) fn flash_worker(
                             );
                         } else if cfg.modify_region || non_cn_country {
                             let _ = session.reset_to_edl(&mut log);
-                            return Err(ltbox_core::i18n::tr("err_flash_tb322fc_prc_only"));
+                            return Err(tr_args!(
+                                "err_flash_prc_only",
+                                model = device_model.as_str()
+                            ));
                         }
                     }
                     Some(floors) => {
@@ -921,7 +930,7 @@ pub(crate) fn flash_worker(
     // region, no downgrade), re-signs to the testkey + preserves the device
     // bootloader (testkey device — including a cross-region convert-then-resign),
     // or aborts (Lenovo-key device cross-region/downgrade, or unknown device key).
-    if fw_key_class == ltbox_patch::key_map::KeyClass::Lenovo && !target_is_tb323fu {
+    if fw_key_class == ltbox_patch::key_map::KeyClass::Lenovo && !target_is_canoe {
         let kc_dir = ltbox_core::app_paths::work_dir_for("flash_keyclass");
         let _ = std::fs::remove_dir_all(&kc_dir);
         std::fs::create_dir_all(&kc_dir)
@@ -1119,7 +1128,7 @@ pub(crate) fn flash_worker(
             let plan =
                 manual_plan.ok_or_else(|| ltbox_core::i18n::tr("rollback_manual_error_missing"))?;
             let arb_work_dir = ltbox_core::app_paths::work_dir_for("flash_arb");
-            if target_is_tb323fu {
+            if target_is_canoe {
                 if !plan.changes_indices() {
                     return Ok((Vec::new(), false));
                 }
@@ -1148,7 +1157,7 @@ pub(crate) fn flash_worker(
         match staged {
             Ok((overlays, needs_arb_gbl)) => {
                 arb_patched = overlays;
-                tb323fu_arb_need = needs_arb_gbl;
+                canoe_arb_need = needs_arb_gbl;
             }
             Err(error) => {
                 if edl_start {
@@ -1159,7 +1168,7 @@ pub(crate) fn flash_worker(
                 return Err(error);
             }
         }
-    } else if rb_mode != ltbox_patch::rollback::RollbackMode::Off && target_is_tb323fu {
+    } else if rb_mode != ltbox_patch::rollback::RollbackMode::Off && target_is_canoe {
         // TB323FU stages the testkey chain whenever the
         // install is a downgrade, independent of region /
         // wipe: the matching `_arb` GBL is flashed to efisp
@@ -1183,7 +1192,7 @@ pub(crate) fn flash_worker(
             None,
             &mut log,
         )?;
-        tb323fu_arb_need = need;
+        canoe_arb_need = need;
         arb_patched = overlays;
     } else if rb_mode != ltbox_patch::rollback::RollbackMode::Off {
         let arb_work_dir = ltbox_core::app_paths::work_dir_for("flash_arb");
@@ -1407,11 +1416,11 @@ pub(crate) fn flash_worker(
     // gated on data wipe — flashing efisp no longer forces
     // a data reset, so it provisions in data-keep mode too.
     // Both flash below.
-    if target_is_tb323fu && (tb323fu_arb_need || cfg.modify_region) {
+    if target_is_canoe && (canoe_arb_need || cfg.modify_region) {
         // TB323FU's AVB fingerprint carries no region token; read the region
         // from the firmware vendor_boot's `product_region` DTB marker instead.
         let staged =
-            efisp_suffix_for_vendor_boot(&vendor_boot, tb323fu_arb_need).and_then(|suffix| {
+            efisp_suffix_for_vendor_boot(&vendor_boot, canoe_arb_need).and_then(|suffix| {
                 fetch_efisp_asset(
                     suffix,
                     &ltbox_core::app_paths::work_dir_for("flash_efisp"),
@@ -1524,7 +1533,7 @@ pub(crate) fn flash_worker(
     // variant on a region-provisioning wipe (best-effort).
     // With no EFI fetched, a same-region wipe strips efisp;
     // every other mode leaves it untouched.
-    if target_is_tb323fu {
+    if target_is_canoe {
         let efisp_lun = ltbox_core::partition_lun::lun_for_partition("efisp").unwrap_or(4);
         match &efisp_efi {
             Some(efi) => {
@@ -1544,7 +1553,7 @@ pub(crate) fn flash_worker(
                     // with this `_arb` GBL. Abort loudly
                     // (device stays in EDL for retry) rather
                     // than resetting into a rollback brick.
-                    if tb323fu_arb_need {
+                    if canoe_arb_need {
                         return Err(tr_args!(
                             "err_flash_efisp_arb_failed",
                             error = e.to_string()
@@ -1562,7 +1571,7 @@ pub(crate) fn flash_worker(
                 // A re-signed chain always fetches the `_arb` GBL,
                 // so reaching here with `need` set is an
                 // internal inconsistency — fail safe.
-                if tb323fu_arb_need {
+                if canoe_arb_need {
                     return Err(ltbox_core::i18n::tr("err_flash_efisp_arb_missing"));
                 }
                 // Same-region wipe with no re-signing strips

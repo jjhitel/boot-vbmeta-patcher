@@ -133,8 +133,8 @@ impl App {
         .spacing(d.space(8.0))
         .width(Length::Fill);
         let rescue_sub = if rescue_disabled {
-            if self.is_tb323fu() {
-                tr_args!("model_unsupported", model = "TB323FU")
+            if self.requires_sahara_manifest() {
+                tr_args!("model_unsupported", model = self.device.model.as_str())
             } else if self.is_xiaoxin_pro13() {
                 tr_args!("model_unsupported", model = "TB376FC / TB390FU")
             } else {

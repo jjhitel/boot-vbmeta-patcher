@@ -5,8 +5,8 @@
 use crate::backup::{create_backup_dir, write_backup_manifest};
 use crate::{
     ConnectionStatus, Family, LiveLabels, PhaseReporter, Provider, RootMode, VerChoice,
-    fingerprint_token_match, install_root_manager_apk, open_edl_session, prepare_tb323fu_efisp,
-    provision_tb323fu_efisp, stage_manager_apk_for_manual_install, transition_to_edl,
+    fingerprint_token_match, install_root_manager_apk, open_edl_session, prepare_canoe_efisp,
+    provision_canoe_efisp, stage_manager_apk_for_manual_install, transition_to_edl,
     wait_and_install_root_manager_apk,
 };
 use ltbox_core::{i18n::tr, live, tr_args};
@@ -78,7 +78,7 @@ pub(crate) fn root_worker(
     // no provider / version / GitHub fetch.
     let is_gki_route = mode == Some(RootMode::Gki);
     if is_gki_route && !ltbox_core::model::capabilities(&device_model).gki_root {
-        return Err(tr_args!("model_unsupported", model = "TB323FU"));
+        return Err(tr_args!("model_unsupported", model = device_model.as_str()));
     }
     let family = family.ok_or_else(|| tr("err_root_family_missing"))?;
     let is_skroot_route = family == Family::Skroot;
@@ -411,7 +411,7 @@ pub(crate) fn root_worker(
                     return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
                 }
                 if is_gki_route && image_capabilities().any(|capabilities| !capabilities.gki_root) {
-                    return Err(tr_args!("model_unsupported", model = "TB323FU"));
+                    return Err(tr_args!("model_unsupported", model = device_model.as_str()));
                 }
                 if !fingerprint_matches_detected_model(&root_image_fingerprint, &device_model) {
                     return Err(tr_args!(
@@ -449,7 +449,7 @@ pub(crate) fn root_worker(
                 // an empty efisp can fetch the matching region GBL.
                 if uses_gbl {
                     let efi_dir = ltbox_core::app_paths::work_dir_for("root_efisp");
-                    root_efisp_efi = prepare_tb323fu_efisp(
+                    root_efisp_efi = prepare_canoe_efisp(
                         &mut session,
                         &slot_suffix,
                         None,
@@ -567,7 +567,7 @@ pub(crate) fn root_worker(
             if let Some(efi) = &root_efisp_efi {
                 phases.mark_writes_started();
                 writes_started = true;
-                provision_tb323fu_efisp(&mut session, Some(efi), &mut log)?;
+                provision_canoe_efisp(&mut session, Some(efi), &mut log)?;
             }
             phases.mark_writes_started();
             writes_started = true;

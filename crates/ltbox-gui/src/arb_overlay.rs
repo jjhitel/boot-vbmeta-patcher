@@ -1,4 +1,4 @@
-//! TB323FU efisp ARB-overlay provisioning: pick the efisp asset variant
+//! Canoe efisp ARB-overlay provisioning: pick the efisp asset variant
 //! and build the per-LUN overlay set. Extracted from main.rs.
 
 use crate::*;
@@ -56,11 +56,12 @@ pub(crate) fn efisp_suffix_for_vendor_boot(
     }
 }
 
-/// Inspect TB323FU `efisp` and, when it is still all-zero, stage the matching
+/// Inspect a Canoe target's `efisp` and, when it is still all-zero, stage the
+/// matching
 /// region GBL used by the Root and KonaBess device workers. The caller performs
-/// the actual efisp write with [`provision_tb323fu_efisp`] at the safest point
+/// the actual efisp write with [`provision_canoe_efisp`] at the safest point
 /// in its own operation.
-pub(crate) fn prepare_tb323fu_efisp(
+pub(crate) fn prepare_canoe_efisp(
     session: &mut ltbox_device::edl::EdlSession,
     slot_suffix: &str,
     dumped_vendor_boot: Option<&std::path::Path>,
@@ -236,9 +237,10 @@ pub(crate) fn verify_efisp_asset(path: &std::path::Path, asset_name: &str) -> Re
     Ok(())
 }
 
-/// Provision a staged TB323FU region GBL. `None` is the already-provisioned
+/// Provision a staged region GBL for a Canoe target. `None` is the
+/// already-provisioned
 /// path and deliberately performs no device write.
-pub(crate) fn provision_tb323fu_efisp(
+pub(crate) fn provision_canoe_efisp(
     session: &mut ltbox_device::edl::EdlSession,
     efi: Option<&std::path::Path>,
     log: &mut Vec<String>,

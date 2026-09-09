@@ -3,7 +3,7 @@
 
 use crate::{
     ConnectionStatus, KonaBessPrepared, LiveLabels, PhaseReporter, open_edl_session,
-    prepare_tb323fu_efisp, provision_tb323fu_efisp, transition_to_edl,
+    prepare_canoe_efisp, provision_canoe_efisp, transition_to_edl,
 };
 use ltbox_core::{live, tr_args};
 use ltbox_patch::konabess::{GpuTable, KonaBessAvbOutput, KonaBessBuildStage, VendorBootDtbInfo};
@@ -25,7 +25,7 @@ struct InspectionPaths {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExploitGateKind {
     SignedVbmeta,
-    Tb323fuEfisp,
+    EfispGbl,
 }
 
 fn exploit_gate_kind(
@@ -36,7 +36,7 @@ fn exploit_gate_kind(
         .map(|capabilities| capabilities.root_uses_gbl)
         .unwrap_or(fallback_uses_gbl);
     if uses_gbl {
-        ExploitGateKind::Tb323fuEfisp
+        ExploitGateKind::EfispGbl
     } else {
         ExploitGateKind::SignedVbmeta
     }
@@ -152,9 +152,9 @@ impl KonaBessInspectionBackend for DeviceBackend<'_> {
             return Err(tr_args!("model_unsupported", model = "TB376FC / TB390FU"));
         }
         match exploit_gate_kind(image_capabilities, self.uses_gbl) {
-            ExploitGateKind::Tb323fuEfisp => {
+            ExploitGateKind::EfispGbl => {
                 let efi_dir = work_dir.join("efisp_gbl");
-                let staged = prepare_tb323fu_efisp(
+                let staged = prepare_canoe_efisp(
                     self.session()?,
                     slot_suffix,
                     Some(vendor_boot),
@@ -166,7 +166,7 @@ impl KonaBessInspectionBackend for DeviceBackend<'_> {
                 if self.writes_started {
                     self.phases.mark_writes_started();
                 }
-                provision_tb323fu_efisp(self.session()?, staged.as_deref(), log)?;
+                provision_canoe_efisp(self.session()?, staged.as_deref(), log)?;
                 Ok(())
             }
             ExploitGateKind::SignedVbmeta => {
@@ -834,8 +834,8 @@ mod tests {
     }
 
     #[test]
-    fn tb323fu_empty_efisp_requires_provision_and_bypasses_avb_gate() {
-        assert_eq!(exploit_gate_kind(None, true), ExploitGateKind::Tb323fuEfisp);
+    fn canoe_empty_efisp_requires_provision_and_bypasses_avb_gate() {
+        assert_eq!(exploit_gate_kind(None, true), ExploitGateKind::EfispGbl);
         assert_eq!(
             exploit_gate_kind(None, false),
             ExploitGateKind::SignedVbmeta
@@ -850,10 +850,7 @@ mod tests {
         let tb323fu = ltbox_core::model::capabilities_from_fingerprint(
             "qti/TB323FU/TB323FU:15/build:user/release-keys",
         );
-        assert_eq!(
-            exploit_gate_kind(tb323fu, false),
-            ExploitGateKind::Tb323fuEfisp
-        );
+        assert_eq!(exploit_gate_kind(tb323fu, false), ExploitGateKind::EfispGbl);
         let tb320fc = ltbox_core::model::capabilities_from_fingerprint(
             "qti/LAVIETab9QHD1/LAVIETab9QHD1:15/build:user/release-keys",
         );
@@ -862,10 +859,7 @@ mod tests {
             ExploitGateKind::SignedVbmeta
         );
         let unknown = ltbox_core::model::capabilities_from_fingerprint("qti/unknown/build");
-        assert_eq!(
-            exploit_gate_kind(unknown, true),
-            ExploitGateKind::Tb323fuEfisp
-        );
+        assert_eq!(exploit_gate_kind(unknown, true), ExploitGateKind::EfispGbl);
     }
 
     #[test]

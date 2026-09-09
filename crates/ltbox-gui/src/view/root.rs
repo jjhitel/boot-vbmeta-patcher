@@ -656,7 +656,7 @@ impl App {
         let columns = 2;
         let side = self.wizard_square_side();
         let tb323fu = !ltbox_core::model::capabilities(&self.device.model).gki_root;
-        let unsupported_tb323fu = tr_args!("model_unsupported", model = "TB323FU");
+        let unsupported_canoe = tr_args!("model_unsupported", model = self.device.model.as_str());
         let lkm_card = icon_option_card_sub_square_sized(
             RootMode::Lkm.icon(self.wizard_square_icon()),
             self.t(RootMode::Lkm.label_key()),
@@ -673,7 +673,7 @@ impl App {
             icon_option_card_sub_square_disabled_sized(
                 RootMode::Gki.icon_disabled(self.wizard_square_icon()),
                 self.t(RootMode::Gki.label_key()),
-                &unsupported_tb323fu,
+                &unsupported_canoe,
                 side,
             )
         } else {
