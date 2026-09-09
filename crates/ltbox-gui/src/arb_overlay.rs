@@ -43,7 +43,8 @@ fn read_efisp_is_empty(path: &std::path::Path) -> Result<bool, String> {
     Ok(efisp_is_empty(&data))
 }
 
-/// Select a GBL only after positively identifying the vendor_boot region.
+/// Select the vendor_boot region's GBL, defaulting to PRC when no marker exists
+/// (as on TB324ZC). Missing, unreadable and empty images still fail.
 pub(crate) fn efisp_suffix_for_vendor_boot(
     path: &std::path::Path,
     arb: bool,
@@ -52,7 +53,13 @@ pub(crate) fn efisp_suffix_for_vendor_boot(
     match ltbox_patch::region::detect_product_region(path) {
         Some(RegionTarget::Prc) => Ok(efisp_asset_suffix(true, arb)),
         Some(RegionTarget::Row) => Ok(efisp_asset_suffix(false, arb)),
-        None => Err(tr_args!("err_efisp_region_unknown", path = path.display())),
+        None => {
+            if std::fs::read(path).is_ok_and(|data| !data.is_empty()) {
+                Ok(efisp_asset_suffix(true, arb))
+            } else {
+                Err(tr_args!("err_efisp_region_unknown", path = path.display()))
+            }
+        }
     }
 }
 
@@ -673,18 +680,27 @@ mod provisioning_tests {
     }
 
     #[test]
-    fn gbl_selection_requires_a_known_region_for_stock_and_arb() {
+    fn gbl_selection_defaults_to_prc_without_a_region_marker() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vendor_boot.img");
         for arb in [false, true] {
             assert!(efisp_suffix_for_vendor_boot(&path, arb).is_err());
             assert!(efisp_suffix_for_vendor_boot(dir.path(), arb).is_err());
         }
-        for data in [b"".as_slice(), b"invalid", b"product_region\0model\0"] {
+        std::fs::write(&path, b"").unwrap();
+        for arb in [false, true] {
+            assert!(efisp_suffix_for_vendor_boot(&path, arb).is_err());
+        }
+        for data in [b"no region marker".as_slice(), b"product_region\0model\0"] {
             std::fs::write(&path, data).unwrap();
-            for arb in [false, true] {
-                assert!(efisp_suffix_for_vendor_boot(&path, arb).is_err());
-            }
+            assert_eq!(
+                efisp_suffix_for_vendor_boot(&path, false).unwrap(),
+                "_prc.efi"
+            );
+            assert_eq!(
+                efisp_suffix_for_vendor_boot(&path, true).unwrap(),
+                "_prc_arb.efi"
+            );
         }
         // Minimal product_region FDT property layout accepted by the detector.
         for (region, stock, arb) in [

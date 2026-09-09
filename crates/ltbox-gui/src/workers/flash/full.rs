@@ -1493,19 +1493,21 @@ pub(crate) fn flash_worker(
         }
     }
 
-    // Download the efisp GBL now that the ARB dump has
-    // decided stock vs `_arb` (testkey-root). The `_arb`
-    // GBL is fetched whenever Auto or Manual re-signed the
-    // chain; the normal GBL is fetched for a cross-region
-    // ("Other region") provisioning install. Neither is
-    // gated on data wipe — flashing efisp no longer forces
-    // a data reset, so it provisions in data-keep mode too.
-    // Both flash below.
-    if target_is_canoe && !no_efisp_load && (canoe_arb_need || cfg.modify_region) {
+    // A testkey firmware needs the `_arb` root of trust even when its
+    // rollback indices remain unchanged. ABL loading was verified above,
+    // including a user-supplied replacement. Combine both reasons into one
+    // download/write without changing the rollback plan or requiring a wipe.
+    let efisp_arb_need = requires_arb_efisp(
+        firmware_fingerprint.as_deref(),
+        fw_key_class,
+        no_efisp_load,
+        canoe_arb_need,
+    );
+    if target_is_canoe && !no_efisp_load && (efisp_arb_need || cfg.modify_region) {
         // TB323FU's AVB fingerprint carries no region token; read the region
         // from the firmware vendor_boot's `product_region` DTB marker instead.
         let staged =
-            efisp_suffix_for_vendor_boot(&vendor_boot, canoe_arb_need).and_then(|suffix| {
+            efisp_suffix_for_vendor_boot(&vendor_boot, efisp_arb_need).and_then(|suffix| {
                 fetch_efisp_asset(
                     suffix,
                     &ltbox_core::app_paths::work_dir_for("flash_efisp"),
@@ -1622,8 +1624,8 @@ pub(crate) fn flash_worker(
     // so the testkey chain and its `_arb` root of trust are
     // provisioned together, before the best-effort region /
     // country work that can abort in between. A fetched EFI
-    // (Some) is flashed: the `_arb` variant whenever a
-    // index change re-signed the chain — fatal on failure since
+    // (Some) is flashed: the `_arb` variant for an existing testkey
+    // firmware or an index change that re-signed the chain — fatal on failure since
     // that chain can't boot without it — or the normal
     // variant on a region-provisioning wipe (best-effort).
     // With no EFI fetched, a same-region wipe strips efisp;
@@ -1644,11 +1646,11 @@ pub(crate) fn flash_worker(
                         "[Flash] {}",
                         tr_args!("live_flash_efisp_flash_failed", error = e.to_string())
                     );
-                    // A staged testkey ARB chain only boots
+                    // A testkey firmware or staged ARB chain only boots
                     // with this `_arb` GBL. Abort loudly
                     // (device stays in EDL for retry) rather
                     // than resetting into a rollback brick.
-                    if canoe_arb_need {
+                    if efisp_arb_need {
                         return Err(tr_args!(
                             "err_flash_efisp_arb_failed",
                             error = e.to_string()
@@ -1663,10 +1665,10 @@ pub(crate) fn flash_worker(
                 }
             }
             None => {
-                // A re-signed chain always fetches the `_arb` GBL,
+                // A testkey or re-signed chain always fetches the `_arb` GBL,
                 // so reaching here with `need` set is an
                 // internal inconsistency — fail safe.
-                if canoe_arb_need {
+                if efisp_arb_need {
                     return Err(ltbox_core::i18n::tr("err_flash_efisp_arb_missing"));
                 }
                 // Same-region wipe with no re-signing strips
@@ -1859,6 +1861,23 @@ fn xiaoxin_rollback_decision(
     }
 }
 
+/// Select the GBL trust root independently of rollback-index modification.
+/// `no_efisp_load` is accepted only after validating the installed ABL bytes.
+fn requires_arb_efisp(
+    firmware_fingerprint: Option<&str>,
+    key_class: ltbox_patch::key_map::KeyClass,
+    no_efisp_load: bool,
+    rollback_requires_arb: bool,
+) -> bool {
+    let testkey_firmware = key_class == ltbox_patch::key_map::KeyClass::Testkey
+        && firmware_fingerprint.is_some_and(|fp| {
+            ["TB323FU", "TB324ZC"]
+                .iter()
+                .any(|model| fingerprint_token_match(fp, model))
+        });
+    !no_efisp_load && (rollback_requires_arb || testkey_firmware)
+}
+
 fn validate_canoe_efisp_choice(
     firmware: ltbox_patch::efisp_load::EfispLoad,
     replacement: Option<ltbox_patch::efisp_load::EfispLoad>,
@@ -1980,6 +1999,39 @@ mod tests {
         EFISP_EXPECTED_ASSETS, EFISP_GBL_RELEASE_TAG, efisp_expected_asset, efisp_expected_sha256,
         verify_efisp_asset,
     };
+
+    #[test]
+    fn testkey_gbl_firmware_requires_arb_efisp_without_index_changes() {
+        use ltbox_patch::efisp_load::EfispLoad::{No, Yes};
+        use ltbox_patch::key_map::KeyClass::{Lenovo, Testkey, Unknown};
+
+        for model in ["TB323FU", "TB324ZC"] {
+            let fp = format!("Lenovo/{model}/{model}:15/build:user/release-keys");
+            for (firmware, replacement, no_load) in
+                [(Yes, None, false), (No, Some(Yes), false), (No, None, true)]
+            {
+                super::validate_canoe_efisp_choice(firmware, replacement, no_load).unwrap();
+                for rollback_need in [false, true] {
+                    assert_eq!(
+                        super::requires_arb_efisp(Some(&fp), Testkey, no_load, rollback_need),
+                        !no_load,
+                        "{model}, {firmware:?}, {replacement:?}, rollback={rollback_need}"
+                    );
+                }
+            }
+            for key in [Lenovo, Unknown] {
+                assert!(!super::requires_arb_efisp(Some(&fp), key, false, false));
+                assert!(super::requires_arb_efisp(Some(&fp), key, false, true));
+            }
+        }
+        for fp in [
+            None,
+            Some("Lenovo/TB320FC/TB320FC:15/build:user/test-keys"),
+            Some("Lenovo/TB324ZCextra/device:15/build:user/test-keys"),
+        ] {
+            assert!(!super::requires_arb_efisp(fp, Testkey, false, false));
+        }
+    }
 
     #[test]
     fn rawprogram_must_install_the_verified_abl_and_not_program_no_load_efisp() {
