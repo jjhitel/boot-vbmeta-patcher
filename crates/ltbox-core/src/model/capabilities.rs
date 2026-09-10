@@ -109,13 +109,14 @@ const TB323FU: ModelCapabilities = ModelCapabilities {
     rollback: RollbackPolicy::Gbl,
     ..GENERIC
 };
-/// TB324ZC — Y700 5G. Shares TB323FU's efisp/GBL route and multi-image Sahara
-/// manifest, but ships PRC-only firmware and exposes a single USB-C port.
+/// TB324ZC — Y700 5G. Shares TB323FU's efisp/GBL route, multi-image Sahara
+/// manifest and dual USB-C ports, but ships PRC-only firmware.
 const TB324ZC: ModelCapabilities = ModelCapabilities {
     gki_root: false,
     rescue: false,
     root_uses_gbl: true,
     requires_sahara_manifest: true,
+    dual_usb: true,
     prc_only: true,
     region_avb_conversion: false,
     rollback: RollbackPolicy::Gbl,
@@ -177,10 +178,11 @@ pub fn fingerprint_capabilities(fp: &str) -> impl Iterator<Item = &'static Model
 mod tests {
     use super::*;
 
-    /// TB324ZC shares TB323FU's exploit route but not its hardware or region,
-    /// so it is pinned against that profile rather than described twice.
+    /// TB324ZC shares TB323FU's exploit route and its dual USB-C hardware but
+    /// not its region, so it is pinned against that profile rather than
+    /// described twice.
     #[test]
-    fn tb324zc_shares_the_gbl_route_but_is_prc_only_with_one_usb_port() {
+    fn tb324zc_shares_the_gbl_route_and_dual_usb_but_is_prc_only() {
         let tb324zc = capabilities("TB324ZC");
         let tb323fu = capabilities("TB323FU");
 
@@ -192,9 +194,9 @@ mod tests {
         assert!(!tb324zc.rescue);
         assert!(!tb324zc.region_avb_conversion);
 
-        // The two axes that separate it from TB323FU.
+        // Dual USB-C is shared; the region is what separates it from TB323FU.
+        assert!(tb324zc.dual_usb && tb323fu.dual_usb);
         assert!(tb324zc.prc_only && !tb323fu.prc_only);
-        assert!(!tb324zc.dual_usb && tb323fu.dual_usb);
 
         assert_eq!(
             capabilities_from_fingerprint("qti/TB324ZC/TB324ZC:16/build:user/release-keys"),
